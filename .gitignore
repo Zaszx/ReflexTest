@@ -1,0 +1,61 @@
+# Unity-generated folders
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Unity build output
+/[Bb]uild/
+/[Bb]uilds/
+/*.apk
+/*.aab
+/*.unitypackage
+
+# Android/IL2CPP intermediate output generated beside this project
+/.utmp/
+/Build_BackUpThisFolder_ButDontShipItWithYourGame/
+/*_BurstDebugInformation_DoNotShip/
+
+# IDEs and generated project files
+/.vs/
+/.idea/
+/.vscode/
+/.consulo/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+.vsconfig
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Gradle and crash-reporting output
+/.gradle/
+crashlytics-build.properties
+
+# Unity profiler/debug artifacts
+sysinfo.txt
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Addressables build data (generated when Addressables is used)
+/[Aa]ssets/[Ss]treamingAssets/aa.meta
+/[Aa]ssets/[Ss]treamingAssets/aa/
+/[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
