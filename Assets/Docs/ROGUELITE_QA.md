@@ -1,5 +1,7 @@
 # Neon Reflex Roguelite QA
 
+The presentation redesign, its isolated runtime capture workflow, and current verification evidence are documented in [PRESENTATION_REDESIGN.md](PRESENTATION_REDESIGN.md). The original manual checklist below is retained as a broader regression reference; it is not an execution report.
+
 ## Provisional balance
 
 Balance remains deliberately editable. Base values live in `GameConfig`: health 3 (cap 20), reserve 15 seconds, and the Reverse baseline. Upgrade tiers and costs live in the four `UpgradeDefinitionData` fields on `GameConfig`; `UpgradeDefaults` supplies health 4–20, reserve 20/25/30/35/40/45 seconds, stabilizer multipliers .90/.80/.70/.60/.50, and Reverse cooldown bonuses 2/4/6/8/10 seconds. Campaign reward, timing, and modifier plateaus are generated in `CampaignTestGenerator.Configure` and remain editable per `LevelData` asset.

@@ -19,6 +19,9 @@
 /Build_BackUpThisFolder_ButDontShipItWithYourGame/
 /*_BurstDebugInformation_DoNotShip/
 
+# Generated QA screenshots, reports, and performance captures
+/[Aa]rtifacts/
+
 # IDEs and generated project files
 /.vs/
 /.idea/

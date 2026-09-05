@@ -293,6 +293,81 @@ public sealed class NeonReflexRulesEditModeTests
     }
 
     [Test]
+    public void WalletOnlySaveRoundTripsWithoutMaterializingAnActiveRun()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            var service = new NeonSaveService(directory);
+            var envelope = SaveEnvelopeData.CreateDefault();
+            envelope.profile.coins = 12345;
+            envelope.profile.maximumHealthTier = 2;
+            envelope.profile.legacyMigrationComplete = true;
+            envelope.profile.lastBankedRunId = "previously-banked-run";
+            service.Save(envelope, config);
+
+            Assert.That(File.ReadAllText(service.PrimaryPath), Does.Not.Contain("\"activeRun\""));
+            SaveEnvelopeData loaded = service.Load(config);
+            Assert.That(loaded.activeRun, Is.Null);
+            Assert.That(loaded.profile.coins, Is.EqualTo(12345));
+            Assert.That(loaded.profile.maximumHealthTier, Is.EqualTo(2));
+            Assert.That(loaded.profile.legacyMigrationComplete, Is.True);
+            Assert.That(loaded.profile.lastBankedRunId, Is.EqualTo("previously-banked-run"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public void LegacyInlineNullRunKeepsTheExistingWalletAndUpgrades()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            var service = new NeonSaveService(directory);
+            var envelope = SaveEnvelopeData.CreateDefault();
+            envelope.profile.coins = 67;
+            envelope.profile.startingReserveTier = 2;
+            // Reproduce the previous serializer's null-inline representation.
+            string legacyJson = JsonUtility.ToJson(envelope, true);
+            Assert.That(legacyJson, Does.Contain("\"activeRun\""));
+            File.WriteAllText(service.PrimaryPath, legacyJson);
+
+            SaveEnvelopeData loaded = service.Load(config);
+            Assert.That(loaded.activeRun, Is.Null);
+            Assert.That(loaded.profile.coins, Is.EqualTo(67));
+            Assert.That(loaded.profile.startingReserveTier, Is.EqualTo(2));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public void DamagedRealRunWithoutAnIdentityStillRecoversItsBackup()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            var service = new NeonSaveService(directory);
+            var valid = SaveEnvelopeData.CreateDefault();
+            valid.profile.coins = 41;
+            valid.activeRun = CreateRun(12f, 8f);
+            valid.activeRun.runId = "valid-backed-up-run";
+            valid.activeRun.runSeed = 42;
+            valid.activeRun.currentLevelId = "neon-reflex-level-001";
+            service.Save(valid, config);
+            service.Save(valid, config);
+            valid.profile.coins = 999;
+            valid.activeRun.runId = string.Empty;
+            File.WriteAllText(service.PrimaryPath, JsonUtility.ToJson(valid, true));
+
+            SaveEnvelopeData loaded = service.Load(config);
+            Assert.That(loaded.profile.coins, Is.EqualTo(41));
+            Assert.That(loaded.activeRun, Is.Not.Null);
+            Assert.That(loaded.activeRun.runId, Is.EqualTo("valid-backed-up-run"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
     public void SaveUsesBackupWhenPrimaryIsParseableButMissingRequiredEnvelopeData()
     {
         string directory = CreateTemporaryDirectory();
@@ -401,6 +476,29 @@ public sealed class NeonReflexRulesEditModeTests
         Assert.That(summary.completionBonus, Is.EqualTo(500));
         Assert.That(summary.totalEarned, Is.EqualTo(520));
         Assert.That(envelope.profile.coins, Is.EqualTo(long.MaxValue));
+    }
+
+    [TestCase(1, true, 1, 1)]
+    [TestCase(4, true, 4, 4)]
+    [TestCase(4, false, 4, 5)]
+    [TestCase(99, false, 100, 100)]
+    public void RunSummaryDistinguishesTheNextAvailableLevelFromTheHighestEntered(
+        int currentLevelIndex, bool betweenLevels, int completed, int expectedHighestEntered)
+    {
+        SaveEnvelopeData envelope = SaveEnvelopeData.CreateDefault();
+        envelope.activeRun = CreateRun(12f, 8f);
+        envelope.activeRun.runId = "level-summary-run";
+        envelope.activeRun.currentLevelIndex = currentLevelIndex;
+        envelope.activeRun.betweenLevels = betweenLevels;
+        envelope.activeRun.levelsCompleted = completed;
+        envelope.activeRun.pendingCoins = 37;
+
+        Assert.That(RunEconomyRules.TryBankAndClearActiveRun(
+            envelope, "level-summary-run", "RUN ABANDONED", false, 0, 100, out RunSummaryData summary), Is.True);
+        Assert.That(summary.highestLevelEntered, Is.EqualTo(expectedHighestEntered));
+        Assert.That(summary.levelsCompleted, Is.EqualTo(completed));
+        Assert.That(summary.totalEarned, Is.EqualTo(37));
+        Assert.That(envelope.profile.coins, Is.EqualTo(37));
     }
 
     [Test]

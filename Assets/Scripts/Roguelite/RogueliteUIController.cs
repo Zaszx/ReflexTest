@@ -1,1115 +1,403 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using static NeonStyle;
 
-/// <summary>
-/// Builds the extra roguelite presentation at runtime. Core run and economy
-/// state stay owned by GameManager and UpgradeCatalog.
-/// </summary>
+/// <summary>The single runtime presentation builder. Serialized panel roots and the gameplay
+/// grid survive; legacy children are replaced once. All displayed state comes from GameManager.</summary>
 public sealed class RogueliteUIController : MonoBehaviour
 {
-    private static readonly Color Cyan = new Color(0f, 0.96f, 1f, 1f);
-    private static readonly Color Pink = new Color(1f, 0.08f, 0.48f, 1f);
-    private static readonly Color Lime = new Color(0.55f, 1f, 0.38f, 1f);
-    private static readonly Color Gold = new Color(1f, 0.76f, 0.22f, 1f);
-    private static readonly Color Danger = new Color(1f, 0.16f, 0.25f, 1f);
-    private static readonly Color Dark = new Color(0.01f, 0.015f, 0.045f, 0.985f);
-    private static readonly Color Surface = new Color(0.025f, 0.035f, 0.09f, 0.98f);
-    private static readonly Color RaisedSurface = new Color(0.055f, 0.07f, 0.16f, 1f);
-    private static readonly Color Muted = new Color(0.56f, 0.62f, 0.76f, 1f);
-
-    private sealed class UpgradeCardView
-    {
-        public RectTransform root;
-        public Image background;
-        public Outline outline;
-        public Image icon;
-        public TMP_Text title;
-        public TMP_Text description;
-        public TMP_Text effect;
-        public TMP_Text tier;
-        public TMP_Text status;
-        public Image progressFill;
-        public Button purchaseButton;
-        public Color accent;
-    }
-
-    private RectTransform canvasRoot;
-    private RectTransform mainMenuRoot;
-    private RectTransform gameplayRoot;
-    private RectTransform settingsRoot;
-    private Button startContinueButton;
-    private Button upgradesButton;
-    private Button settingsButton;
-    private Toggle hapticsToggle;
-    private Sprite buttonSprite;
-    private TMP_Text gameplayLevelText;
-    private TMP_Text gameplayTimerText;
-    private TMP_Text gameplayObjectiveText;
-    private Button gameplayHomeButton;
-    private Button gameplaySettingsButton;
-    private RectTransform gameplayGridContainer;
-
+    private NeonTheme T => NeonTheme.T;
+    private GameManager gm;
+    private RectTransform canvas, menu, play, settings, shop;
+    private GameObject shopPanel, abandonDialog;
     private Button abandonButton;
-    private TMP_Text menuStatus;
-    private TMP_Text healthValueText;
-    private TMP_Text reserveValueText;
-    private TMP_Text pendingValueText;
-    private TMP_Text debugBadgeText;
-    private Image healthFill;
-    private Image reserveFill;
-    private Image timerFill;
-    private Image objectiveFill;
-    private Outline gameplayTopOutline;
-    private Outline gameplayVitalsOutline;
-    private GameObject shopPanel;
-    private TMP_Text walletText;
-    private TMP_Text shopNoticeText;
-    private TMP_Text shopFeedbackText;
-    private GameObject abandonDialog;
-    private TMP_Text abandonMessage;
-    private readonly Dictionary<UpgradeId, UpgradeCardView> upgradeCards = new Dictionary<UpgradeId, UpgradeCardView>();
-    private Coroutine purchaseFeedbackCoroutine;
-
-    private Action startOrContinueRequested;
-    private Action abandonConfirmed;
-    private Action upgradesRequested;
-    private Action settingsRequested;
-    private Action shopClosed;
+    private TMP_Text menuState, menuResources, menuWallet, health, reserve, pending, rule, timerLabel, objective, modifiers, debugBadge;
+    private TMP_Text wallet, shopNotice, shopFeedback, abandonMessage, settingsHeading;
+    private Image healthFill, timerFill, progressFill, ruleRail;
+    private Toggle hapticsToggle, reducedToggle;
+    private Action startRequested, abandonConfirmed, upgradesRequested, settingsRequested, shopClosed;
     private Action<bool> hapticsChanged;
-    private Func<UpgradeId, bool> purchaseRequested;
+    private Func<UpgradeId,bool> purchaseRequested;
     private GameConfig config;
     private PlayerProfileData profile;
     private bool hasActiveRun;
     private long pendingCoins;
-
+    private long displayedPending = long.MinValue;
+    private bool displayedDebug;
+    private int cachedLevel;
+    private string modifierText;
+    private readonly Dictionary<UpgradeId, UpgradeView> cards = new Dictionary<UpgradeId, UpgradeView>();
+    private ResultView successView, failView;
+    private float feedbackUntil;
+    private sealed class UpgradeView
+    {
+        public TMP_Text title, description, tier, benefit, status;
+        public Button buy;
+        public Image progress;
+        public Color accent;
+    }
+    private sealed class ResultView
+    {
+        public TMP_Text eyebrow, title, description, amount, amountLabel, leftLabel, leftValue, rightLabel, rightValue, footer;
+        public NeonShape emblem;
+    }
     public bool IsShopVisible => shopPanel != null && shopPanel.activeSelf;
     public bool IsAbandonConfirmationVisible => abandonDialog != null && abandonDialog.activeSelf;
 
-    public void Initialize(
-        RectTransform canvas,
-        RectTransform mainMenu,
-        RectTransform gameplay,
-        RectTransform settings,
-        Button startContinue,
-        Button upgrades,
-        Button menuSettings,
-        Toggle existingHaptics,
-        TMP_Text existingLevelText,
-        TMP_Text existingTimerText,
-        TMP_Text existingObjectiveText,
-        Button existingHomeButton,
-        Button existingGameplaySettingsButton,
-        RectTransform existingGridContainer,
-        Sprite sprite)
+    public void Initialize(GameManager manager)
     {
-        canvasRoot = canvas;
-        mainMenuRoot = mainMenu;
-        gameplayRoot = gameplay;
-        settingsRoot = settings;
-        startContinueButton = startContinue;
-        upgradesButton = upgrades;
-        settingsButton = menuSettings;
-        hapticsToggle = existingHaptics;
-        gameplayLevelText = existingLevelText;
-        gameplayTimerText = existingTimerText;
-        gameplayObjectiveText = existingObjectiveText;
-        gameplayHomeButton = existingHomeButton;
-        gameplaySettingsButton = existingGameplaySettingsButton;
-        gameplayGridContainer = existingGridContainer;
-        buttonSprite = sprite;
-
-        if (canvasRoot == null)
-            return;
-
-        CreateMenuExtras();
-        CreateHud();
-        CreateShop();
-        CreateAbandonDialog();
-        EnsureHapticsToggle();
-        BindButtons();
+        gm = manager; canvas = gm.mainMenuPanel.transform.parent as RectTransform;
+        var scaler = canvas.GetComponent<CanvasScaler>();
+        if (scaler != null) { scaler.referenceResolution = new Vector2(1080,1920); scaler.matchWidthOrHeight = 0; }
+        // Preserve the authored grid and flash references before retiring old gameplay decoration.
+        RectTransform bounds = gm.gridContainer.parent as RectTransform;
+        bounds.SetParent(canvas,false);
+        if (gm.flashOverlay != null) gm.flashOverlay.transform.SetParent(canvas,false);
+        menu = ResetPanel(gm.mainMenuPanel);
+        play = ResetPanel(gm.gameplayPanel);
+        settings = ResetPanel(gm.settingsPanel);
+        RectTransform success = ResetPanel(gm.successPanel), fail = ResetPanel(gm.failPanel);
+        bounds.SetParent(play,false); Fill(bounds,40,234,40,476);
+        var boundsImage = bounds.GetComponent<Image>(); if(boundsImage!=null) { boundsImage.color=Color.clear; boundsImage.raycastTarget=false; }
+        if (gm.flashOverlay != null) { gm.flashOverlay.transform.SetParent(play,false); Fill(gm.flashOverlay.rectTransform); gm.flashOverlay.transform.SetAsLastSibling(); }
+        CreateMenu(); CreateHud(); CreateSettings();
+        successView = CreateResult(success,true); failView = CreateResult(fail,false);
+        CreateShop(); CreateAbandonDialog();
+        gm.mainMenuPanel.SetActive(true); gm.gameplayPanel.SetActive(false); gm.settingsPanel.SetActive(false);
+        gm.successPanel.SetActive(false); gm.failPanel.SetActive(false);
     }
 
-    public void BindCallbacks(
-        Action startOrContinue,
-        Action abandon,
-        Action openUpgrades,
-        Action openSettings,
-        Action closeShop,
-        Action<bool> changeHaptics,
-        Func<UpgradeId, bool> purchaseUpgrade)
+    private RectTransform ResetPanel(GameObject panel)
     {
-        startOrContinueRequested = startOrContinue;
-        abandonConfirmed = abandon;
-        upgradesRequested = openUpgrades;
-        settingsRequested = openSettings;
-        shopClosed = closeShop;
-        hapticsChanged = changeHaptics;
-        purchaseRequested = purchaseUpgrade;
-        BindButtons();
+        panel.SetActive(true);
+        foreach(Transform child in panel.transform) { child.gameObject.SetActive(false); Destroy(child.gameObject); }
+        var bg=panel.GetComponent<Image>();if(bg==null)bg=panel.AddComponent<Image>();bg.sprite=null;bg.color=T.Background;bg.raycastTarget=true;
+        foreach(var effect in panel.GetComponents<BaseMeshEffect>()) Destroy(effect);
+        Fill((RectTransform)panel.transform);
+        var safe=Rect("SafeContent",panel.transform); Fill(safe); safe.gameObject.AddComponent<NeonSafeArea>();
+        safe.gameObject.AddComponent<NeonPanelEntrance>();
+        return safe;
+    }
+    private TMP_Text Txt(string name,Transform parent,string value,float size,float x,float y,float w,float h,Color? color=null,float ax=0,float ay=1)
+    {
+        var t=Text(name,parent,value,size,color??T.Text); At(t.rectTransform,ax,ay,x+w*.5f,y-h*.5f,w,h); return t;
+    }
+    private TMP_Text Eyebrow(Transform parent,string text,float y=70)
+    { var t=Txt("Eyebrow",parent,text,T.labelSize,T.pageMargin,-y,900,40,T.Muted); t.characterSpacing=3; return t; }
+    private void Hairline(Transform parent,float y)
+    { var r=Rule("Divider",parent); r.rectTransform.anchorMin=new Vector2(0,1); r.rectTransform.anchorMax=new Vector2(1,1); r.rectTransform.offsetMin=new Vector2(T.pageMargin,-y-T.ruleWidth);r.rectTransform.offsetMax=new Vector2(-T.pageMargin,-y); }
+    private Button WideButton(string name,Transform parent,string label,float bottom,bool primary)
+    {
+        var b=Button(name,parent,label,primary); var r=(RectTransform)b.transform;
+        r.anchorMin=new Vector2(0,0);r.anchorMax=new Vector2(1,0);r.pivot=new Vector2(.5f,0);
+        r.offsetMin=new Vector2(T.pageMargin,bottom);r.offsetMax=new Vector2(-T.pageMargin,bottom+(primary?136:T.controlHeight));
+        if(primary) { var arrow=Shape("Forward",b.transform,NeonShape.Kind.Arrow,T.Background,4); At(arrow.rectTransform,1,.5f,-62,0,44,44); }
+        return b;
     }
 
-    public void RefreshMenu(bool activeRun, int currentLevelNumber, long wallet, long pending)
+    private void CreateMenu()
     {
-        hasActiveRun = activeRun;
-        pendingCoins = Math.Max(0L, pending);
-
-        SetButtonLabel(startContinueButton, activeRun ? "CONTINUE RUN" : "START RUN");
-        SetButtonLabel(upgradesButton, "UPGRADES");
-        SetButtonLabel(settingsButton, "SETTINGS");
-        if (abandonButton != null)
-            abandonButton.gameObject.SetActive(activeRun);
-
-        LayoutMenuButtons(activeRun);
-        if (menuStatus != null)
-        {
-            menuStatus.text = activeRun
-                ? $"WALLET {Math.Max(0L, wallet):N0}  •  RUN LEVEL {Mathf.Max(1, currentLevelNumber)}  •  PENDING {pendingCoins:N0}"
-                : $"WALLET {Math.Max(0L, wallet):N0}  •  NEXT RUN STARTS AT LEVEL 1";
-        }
-    }
-
-    public void RefreshHud(
-        int health,
-        int maximumHealth,
-        float reserveSeconds,
-        float maximumReserveSeconds,
-        long pending,
-        int objectiveProgress,
-        int objectiveRequired,
-        float timeRemaining,
-        float timeLimit,
-        bool reserveActive,
-        bool reverseActive,
-        bool debug)
-    {
-        int safeHealth = Mathf.Max(0, health);
-        int safeMaximumHealth = Mathf.Max(1, maximumHealth);
-        float safeReserve = Mathf.Max(0f, reserveSeconds);
-        float safeMaximumReserve = Mathf.Max(0.01f, maximumReserveSeconds);
-        int safeRequired = Mathf.Max(1, objectiveRequired);
-
-        if (healthValueText != null)
-            healthValueText.text = $"<b>{safeHealth}</b><size=22><color=#7D89AA> / {safeMaximumHealth}</color></size>";
-        if (reserveValueText != null)
-            reserveValueText.text = $"<b>{safeReserve:0.0}</b><size=20><color=#7D89AA>s</color></size>";
-        if (pendingValueText != null)
-            pendingValueText.text = $"<color=#FFD66B>+</color><b>{Math.Max(0L, pending):N0}</b>";
-
-        SetFill(healthFill, safeHealth / (float)safeMaximumHealth, safeHealth <= 1 ? Danger : Lime);
-        SetFill(reserveFill, safeReserve / safeMaximumReserve, reserveActive ? Pink : Cyan);
-        SetFill(objectiveFill, Mathf.Clamp(objectiveProgress, 0, safeRequired) / (float)safeRequired, reverseActive ? Pink : Cyan);
-
-        float timerMaximum = reserveActive ? safeMaximumReserve : Mathf.Max(0.01f, timeLimit);
-        float timerCurrent = reserveActive ? safeReserve : Mathf.Max(0f, timeRemaining);
-        Color timerColor = reserveActive ? Pink : timeRemaining <= 5f ? Danger : Cyan;
-        SetFill(timerFill, timerCurrent / timerMaximum, timerColor);
-
-        if (debugBadgeText != null)
-        {
-            debugBadgeText.gameObject.SetActive(debug);
-            debugBadgeText.text = "DEBUG SANDBOX • PROGRESS IS NOT SAVED";
-        }
-    }
-
-    public void ApplyGameplayTheme(Color primary, Color accent)
-    {
-        if (gameplayLevelText != null)
-            gameplayLevelText.color = primary;
-        if (gameplayTopOutline != null)
-            gameplayTopOutline.effectColor = new Color(accent.r, accent.g, accent.b, 0.7f);
-        if (gameplayVitalsOutline != null)
-            gameplayVitalsOutline.effectColor = new Color(accent.r, accent.g, accent.b, 0.42f);
-    }
-
-    public void ShowShop(GameConfig gameConfig, PlayerProfileData player, bool activeRun)
-    {
-        config = gameConfig;
-        profile = player;
-        hasActiveRun = activeRun;
-        RefreshShop();
-        if (shopPanel != null)
-        {
-            shopPanel.SetActive(true);
-            shopPanel.transform.SetAsLastSibling();
-        }
-    }
-
-    public void RefreshShop(GameConfig gameConfig, PlayerProfileData player, bool activeRun)
-    {
-        config = gameConfig;
-        profile = player;
-        hasActiveRun = activeRun;
-        RefreshShop();
-    }
-
-    public void HideShop(bool notify = false)
-    {
-        if (purchaseFeedbackCoroutine != null)
-        {
-            StopCoroutine(purchaseFeedbackCoroutine);
-            purchaseFeedbackCoroutine = null;
-        }
-        foreach (UpgradeCardView card in upgradeCards.Values)
-            card.root.localScale = Vector3.one;
-        if (shopFeedbackText != null)
-        {
-            shopFeedbackText.text = "UPGRADES ARE PERMANENT • EFFECTS SNAPSHOT WHEN A NEW RUN STARTS";
-            shopFeedbackText.color = Muted;
-        }
-        if (shopPanel != null)
-            shopPanel.SetActive(false);
-        if (notify)
-            shopClosed?.Invoke();
-    }
-
-    public void ShowAbandonConfirmation()
-    {
-        if (abandonDialog == null)
-            return;
-
-        if (abandonMessage != null)
-        {
-            abandonMessage.text =
-                "ABANDON ACTIVE RUN?\n\n" +
-                $"{pendingCoins:N0} pending coins from completed levels will be banked. " +
-                "The current level earns nothing and the run will end.";
-        }
-        abandonDialog.SetActive(true);
-        abandonDialog.transform.SetAsLastSibling();
-    }
-
-    public void HideAbandonConfirmation()
-    {
-        if (abandonDialog != null)
-            abandonDialog.SetActive(false);
-    }
-
-    public void SetHaptics(bool enabled)
-    {
-        hapticsToggle?.SetIsOnWithoutNotify(enabled);
-    }
-
-    private void CreateMenuExtras()
-    {
-        if (mainMenuRoot == null)
-            return;
-
-        abandonButton = CreateButton("AbandonRunButton", mainMenuRoot, "ABANDON RUN", new Color(0.55f, 0.08f, 0.2f, 1f));
-        SetRect(abandonButton.GetComponent<RectTransform>(), new Vector2(600f, 120f), new Vector2(0f, -220f));
-        abandonButton.gameObject.SetActive(false);
-
-        menuStatus = CreateText("RogueliteStatus", mainMenuRoot, 27f, Cyan);
-        menuStatus.textWrappingMode = TextWrappingModes.Normal;
-        SetRect(menuStatus.rectTransform, new Vector2(940f, 90f), new Vector2(0f, -670f));
-    }
-
-    private void LayoutMenuButtons(bool activeRun)
-    {
-        SetMenuButtonPosition(startContinueButton, activeRun ? -60f : -100f);
-        if (activeRun)
-        {
-            SetMenuButtonPosition(abandonButton, -220f);
-            SetMenuButtonPosition(upgradesButton, -380f);
-            SetMenuButtonPosition(settingsButton, -540f);
-        }
-        else
-        {
-            SetMenuButtonPosition(upgradesButton, -260f);
-            SetMenuButtonPosition(settingsButton, -420f);
-        }
-    }
-
-    private static void SetMenuButtonPosition(Button button, float y)
-    {
-        if (button == null)
-            return;
-        button.GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, y);
+        Eyebrow(menu,"A GAME OF SIZE & INSTINCT");
+        menuWallet=Txt("PermanentBalance",menu,"",26,T.pageMargin,-124,952,44,T.Muted); menuWallet.alignment=TextAlignmentOptions.MidlineRight;
+        var neon=Txt("NeonWordmark",menu,"NEON",T.displaySize,T.pageMargin,-194,910,180); neon.fontStyle=FontStyles.Bold; neon.characterSpacing=-7;
+        var reflex=Txt("ReflexWordmark",menu,"REFLEX",T.displaySize,T.pageMargin,-350,955,170,T.Primary); reflex.fontStyle=FontStyles.Bold; reflex.characterSpacing=-8;
+        Txt("Manifesto",menu,"Find the largest.\nTrust your reflex.",34,T.pageMargin,-558,670,98,T.Text).textWrappingMode=TextWrappingModes.Normal;
+        // The offset nested frames are the game's size-reading mechanic made into a mark.
+        var motif=Shape("OpticalSignature",menu,NeonShape.Kind.Reticle,T.Target,3);
+        At(motif.rectTransform,.66f,.54f,0,0,430,430); motif.rectTransform.localRotation=Quaternion.Euler(0,0,-14);
+        motif.gameObject.AddComponent<NeonOpticalMotion>();
+        var serial=Txt("CampaignLabel",menu,"CAMPAIGN\n"+gm.campaign.LevelCount+" LEVELS",24,T.pageMargin,-30,340,76,T.Muted,0,.43f); serial.characterSpacing=3;
+        menuState=Txt("RunState",menu,"",38,T.pageMargin,628,930,54,T.Text,0,0); menuState.fontStyle=FontStyles.Bold;
+        menuResources=Txt("RunResources",menu,"",27,T.pageMargin,560,930,90,T.Muted,0,0); menuResources.textWrappingMode=TextWrappingModes.Normal;
+        gm.startContinueButton=WideButton("StartContinue",menu,"START RUN",310,true);
+        gm.upgradesButton=Button("Upgrades",menu,"UPGRADES"); At((RectTransform)gm.upgradesButton.transform,.25f,0,27,222,466,108);
+        gm.menuSettingsButton=Button("Settings",menu,"SETTINGS"); At((RectTransform)gm.menuSettingsButton.transform,.75f,0,-27,222,466,108);
+        abandonButton=Button("AbandonRun",menu,"END ACTIVE RUN"); At((RectTransform)abandonButton.transform,.5f,0,0,116,560,76);
+        abandonButton.image.color=T.Background; var abandonLabel=abandonButton.GetComponentInChildren<TMP_Text>(); abandonLabel.color=T.Muted; abandonLabel.fontSize=24; abandonLabel.alignment=TextAlignmentOptions.Center;
+        abandonButton.onClick.AddListener(ShowAbandonConfirmation);
+        Txt("MenuFooter",menu,"PRECISION UNDER PRESSURE",22,T.pageMargin,54,820,30,T.Muted,0,0).characterSpacing=3;
     }
 
     private void CreateHud()
     {
-        if (gameplayRoot == null)
-            return;
+        Eyebrow(play,"CAMPAIGN",58);
+        gm.levelText=Txt("Level",play,"01",86,T.pageMargin,-116,470,110); gm.levelText.fontStyle=FontStyles.Bold;
+        objective=Txt("Objective",play,"",28,T.pageMargin,-240,500,48,T.Muted); gm.remainingText=objective;
+        progressFill=Track("ObjectiveProgress",play,new Vector2(64,-309),436,5);
+        timerLabel=Txt("TimerLabel",play,"LEVEL TIME",24,600,-68,416,44,T.Muted); timerLabel.alignment=TextAlignmentOptions.MidlineRight;
+        gm.timerText=Txt("Timer",play,"",104,558,-99,458,140); gm.timerText.alignment=TextAlignmentOptions.MidlineRight;
+        gm.timerText.overflowMode=TextOverflowModes.Overflow;
+        gm.timerText.fontStyle=FontStyles.Bold;
+        timerFill=Track("TimeProgress",play,new Vector2(650,-244),366,5);
+        reserve=Txt("Reserve",play,"",28,540,-268,476,49,T.Reserve); reserve.alignment=TextAlignmentOptions.MidlineRight;
+        health=Txt("Health",play,"",30,T.pageMargin,-340,470,54,T.Text);
+        var healthIcon=Shape("HealthGlyph",play,NeonShape.Kind.Health,T.Primary,3); At(healthIcon.rectTransform,0,1,84,-364,35,35);
+        health.rectTransform.anchoredPosition+=new Vector2(55,0); health.rectTransform.sizeDelta-=new Vector2(55,0);
+        healthFill=Track("HealthProgress",play,new Vector2(650,-365),366,5);
+        Hairline(play,414);
+        ruleRail=Rule("RuleRail",play,T.Target); At(ruleRail.rectTransform,0,1,69,-457,8,38);
+        rule=Txt("TargetRule",play,"LARGEST OUTLINE",30,92,-433,600,52,T.Target); rule.fontStyle=FontStyles.Bold;
+        modifiers=Txt("Modifiers",play,"",23,520,-435,496,48,T.Muted);modifiers.alignment=TextAlignmentOptions.MidlineRight;
+        pending=Txt("PendingEarnings",play,"",25,T.pageMargin,193,952,46,T.Muted,0,0);
+        debugBadge=Txt("Sandbox",play,"DEBUG SANDBOX / NO PROGRESSION",22,T.pageMargin,234,952,38,T.Reserve,0,0);
+        gm.homeButton=Button("Home",play,"HOME"); At((RectTransform)gm.homeButton.transform,0,0,242,100,356,104);
+        gm.settingsButton=Button("Pause",play,"PAUSE"); At((RectTransform)gm.settingsButton.transform,1,0,-242,100,356,104);
+        var pause=Shape("PauseGlyph",gm.settingsButton.transform,NeonShape.Kind.Pause,T.Text,5); At(pause.rectTransform,1,.5f,-50,0,36,36);
+    }
 
-        ConfigureGameplayTopBar();
+    private Image Track(string name,Transform parent,Vector2 topLeft,float width,float height)
+    {
+        var track=Rule(name,parent); At(track.rectTransform,0,1,topLeft.x+width*.5f,topLeft.y,width,height);
+        var fill=Rule("Fill",track.transform,T.Primary); Fill(fill.rectTransform); return fill;
+    }
+    private static void SetFill(Image image,float amount,Color color)
+    { if(image==null)return; image.color=color; var r=image.rectTransform; r.anchorMax=new Vector2(Mathf.Clamp01(amount),1);r.offsetMin=r.offsetMax=Vector2.zero; }
 
-        GameObject vitals = CreatePanel("RunVitals", gameplayRoot, Surface);
-        RectTransform vitalsRect = vitals.GetComponent<RectTransform>();
-        SetAnchoredRect(vitalsRect, new Vector2(0.04f, 0.77f), new Vector2(0.96f, 0.832f), Vector2.zero, Vector2.zero);
-        Image vitalsImage = vitals.GetComponent<Image>();
-        vitalsImage.raycastTarget = false;
-        ApplyRoundedSprite(vitalsImage);
-        gameplayVitalsOutline = vitals.AddComponent<Outline>();
-        gameplayVitalsOutline.effectColor = new Color(0f, 0.96f, 1f, 0.42f);
-        gameplayVitalsOutline.effectDistance = new Vector2(2f, -2f);
-
-        CreateHudMetric(
-            "Integrity",
-            vitals.transform,
-            new Vector2(0f, 0f),
-            new Vector2(0.333f, 1f),
-            "INTEGRITY",
-            Lime,
-            out healthValueText,
-            out healthFill);
-        CreateHudMetric(
-            "Reserve",
-            vitals.transform,
-            new Vector2(0.333f, 0f),
-            new Vector2(0.667f, 1f),
-            "RESERVE",
-            Cyan,
-            out reserveValueText,
-            out reserveFill);
-        CreateHudMetric(
-            "RunBank",
-            vitals.transform,
-            new Vector2(0.667f, 0f),
-            new Vector2(1f, 1f),
-            "RUN BANK",
-            Gold,
-            out pendingValueText,
-            out _);
-
-        debugBadgeText = CreateText("DebugBadge", gameplayRoot, 17f, new Color(1f, 0.55f, 0.18f, 1f));
-        debugBadgeText.fontStyle = FontStyles.Bold;
-        debugBadgeText.characterSpacing = 2f;
-        SetPointRect(debugBadgeText.rectTransform, new Vector2(0.5f, 0.752f), new Vector2(560f, 38f), Vector2.zero);
-        debugBadgeText.gameObject.SetActive(false);
-
-        RectTransform gridBounds = gameplayGridContainer == null ? null : gameplayGridContainer.parent as RectTransform;
-        if (gridBounds != null)
+    public void BindCallbacks(Action startOrContinue,Action abandon,Action openUpgrades,Action openSettings,Action closeShop,Action<bool> changeHaptics,Func<UpgradeId,bool> purchaseUpgrade)
+    {
+        startRequested=startOrContinue;abandonConfirmed=abandon;upgradesRequested=openUpgrades;settingsRequested=openSettings;shopClosed=closeShop;hapticsChanged=changeHaptics;purchaseRequested=purchaseUpgrade;
+        gm.startContinueButton.onClick.AddListener(()=>startRequested?.Invoke());
+        gm.upgradesButton.onClick.AddListener(()=>upgradesRequested?.Invoke());
+        gm.menuSettingsButton.onClick.AddListener(()=>settingsRequested?.Invoke());
+    }
+    public void RefreshMenu(bool activeRun,int currentLevelNumber,long balance,long pendingAmount,ActiveRunData run=null)
+    {
+        RefreshInputLayers();
+        hasActiveRun=activeRun;pendingCoins=Math.Max(0,pendingAmount);
+        ButtonText(gm.startContinueButton,activeRun?"CONTINUE RUN":"START RUN"); abandonButton.gameObject.SetActive(activeRun);
+        menuWallet.text=$"{Math.Max(0,balance):N0}  BANKED COINS";
+        menuState.text=activeRun?$"YOUR RUN · LEVEL {Mathf.Max(1,currentLevelNumber):00}":"ONE RUN. MAKE IT COUNT.";
+        menuResources.text=activeRun && run!=null
+            ? $"{run.currentHealth}/{run.upgrades.maxHealth} health  ·  {run.currentReserveSeconds:0.0}s reserve\n{pendingCoins:N0} pending coins from completed levels"
+            : activeRun?$"{pendingCoins:N0} pending coins · Pick up where you left off.":"Begin at Level 1. Carry your health and reserve\nthrough the campaign. Every completed level pays.";
+    }
+    public void UpdateLevelContext(LevelData level,int count)
+    {
+        cachedLevel=level.levelNumber;
+        gm.levelText.text=$"{cachedLevel:00}<size=30><color=#9EAFAD> / {count}</color></size>";
+        var list=new List<string>(); if(!Mathf.Approximately(level.rotateSpeed,0))list.Add("ROTATE");if(level.scaleEnabled)list.Add("SCALE");if(level.movementEnabled)list.Add("MOVE");
+        modifierText=string.Join(" · ",list); modifiers.text=modifierText;
+        ApplyGameplayTheme(level.textPrimaryColor,level.outlineColor);
+    }
+    public void RefreshHud(int currentHealth,int maximumHealth,float reserveSeconds,float maximumReserveSeconds,long runPending,int progress,int required,float remaining,float timeLimit,bool reserveActive,bool reverseActive,bool debug)
+    {
+        health.SetText("<mspace=22>{0}</mspace><color=#9EAFAD> / {1} HEALTH</color>",Mathf.Max(0,currentHealth),maximumHealth);
+        health.color=currentHealth<=1?T.Danger:T.Text;
+        reserve.SetText(reserveActive?"LEVEL TIME EXHAUSTED":"RESERVE  <mspace=19>{0:1}</mspace>s",Mathf.Max(0,reserveSeconds));
+        reserve.color=T.Reserve;
+        gm.timerText.SetText("<mspace=65>{0:1}</mspace><size=32>s</size>",Mathf.Max(0,reserveActive?reserveSeconds:remaining));
+        gm.timerText.color=reserveActive?T.Reserve:remaining<=5?T.Reserve:T.Text;
+        timerLabel.text=reserveActive?"RESERVE · DRAINING":"LEVEL TIME";timerLabel.color=reserveActive?T.Reserve:T.Muted;
+        objective.SetText("{0} <color=#9EAFAD>/ {1} TARGETS</color>",progress,required);
+        SetFill(progressFill,progress/(float)Mathf.Max(1,required),reverseActive?T.Reverse:T.Primary);
+        SetFill(timerFill,(reserveActive?reserveSeconds:remaining)/Mathf.Max(.01f,reserveActive?maximumReserveSeconds:timeLimit),reserveActive?T.Reserve:T.Target);
+        SetFill(healthFill,currentHealth/(float)Mathf.Max(1,maximumHealth),currentHealth<=1?T.Danger:T.Primary);
+        rule.text=reverseActive?"REVERSE / SMALLEST":"LARGEST OUTLINE";rule.color=ruleRail.color=reverseActive?T.Reverse:T.Target;
+        if(displayedPending!=runPending||displayedDebug!=debug)
         {
-            gridBounds.anchorMin = new Vector2(0.05f, 0.055f);
-            gridBounds.anchorMax = new Vector2(0.95f, 0.745f);
-            gridBounds.offsetMin = Vector2.zero;
-            gridBounds.offsetMax = Vector2.zero;
+            pending.text=debug?"PRACTICE SESSION":$"+{Math.Max(0,runPending):N0} PENDING COINS";
+            displayedPending=runPending;displayedDebug=debug;
         }
+        debugBadge.gameObject.SetActive(debug);
+    }
+    public void ApplyGameplayTheme(Color primary,Color accent)
+    {
+        gm.gameplayPanel.GetComponent<Image>().color=T.Background;
+        if(Camera.main!=null)Camera.main.backgroundColor=T.Background;
+        if(gm.levelText!=null)gm.levelText.color=T.Text;
     }
 
-    private void ConfigureGameplayTopBar()
+    private void CreateSettings()
     {
-        RectTransform topBar = gameplayLevelText == null ? null : gameplayLevelText.transform.parent as RectTransform;
-        if (topBar == null)
-            return;
+        Eyebrow(settings,"NEON REFLEX / PREFERENCES");
+        settingsHeading=Txt("Title",settings,"SETTINGS",T.headingSize,T.pageMargin,-202,940,114);settingsHeading.fontStyle=FontStyles.Bold;
+        Txt("Intro",settings,"Make yourself comfortable.",34,T.pageMargin,-334,900,60,T.Muted);
+        Hairline(settings,464);
+        hapticsToggle=SettingRow(settings,"Haptic feedback","A tactile cue on supported devices.",530,false);
+        hapticsToggle.onValueChanged.AddListener(v=>hapticsChanged?.Invoke(v));gm.hapticToggle=hapticsToggle;gm.sfxVolumeSlider=null;
+        reducedToggle=SettingRow(settings,"Reduced effects","Quieter transitions and feedback.\nGrid motion and game rules stay the same.",790,true);
+        reducedToggle.SetIsOnWithoutNotify(NeonTheme.ReducedEffects);reducedToggle.onValueChanged.AddListener(v=>NeonTheme.ReducedEffects=v);
+        Txt("SettingsNote",settings,"Your run waits here.\nHealth, time and motion pause together.",30,T.pageMargin,-1170,910,120,T.Muted).textWrappingMode=TextWrappingModes.Normal;
+        gm.settingsCloseButton=WideButton("CloseSettings",settings,"DONE",116,true);
+    }
+    private Toggle SettingRow(Transform parent,string title,string description,float y,bool reduced)
+    {
+        Txt("SettingTitle",parent,title,38,T.pageMargin,-y,690,70).fontStyle=FontStyles.Bold;
+        var d=Txt("SettingDescription",parent,description,29,T.pageMargin,-y-84,720,114,T.Muted);d.textWrappingMode=TextWrappingModes.Normal;
+        var bg=Panel(reduced?"ReducedEffectsToggle":"HapticsToggle",parent,T.Raised,true);At(bg.rectTransform,1,1,-150,-y-46,174,96);
+        var toggle=bg.gameObject.AddComponent<Toggle>();toggle.targetGraphic=bg;toggle.navigation=new Navigation{mode=Navigation.Mode.None};
+        var on=Panel("On",bg.transform,T.Primary);Fill(on.rectTransform,6,6,6,6);toggle.graphic=on;
+        var label=Text("State",bg.transform,"OFF",27,T.Text,TextAlignmentOptions.Center);Fill(label.rectTransform);
+        toggle.onValueChanged.AddListener(v=>{label.text=v?"ON":"OFF";label.color=v?T.Background:T.Text;});
+        return toggle;
+    }
+    public void SetHaptics(bool enabled)
+    {
+        hapticsToggle.SetIsOnWithoutNotify(enabled);
+        var text=hapticsToggle.GetComponentInChildren<TMP_Text>();text.text=enabled?"ON":"OFF";text.color=enabled?T.Background:T.Text;
+        if(reducedToggle!=null){bool on=NeonTheme.ReducedEffects;reducedToggle.SetIsOnWithoutNotify(on);var rt=reducedToggle.GetComponentInChildren<TMP_Text>();rt.text=on?"ON":"OFF";rt.color=on?T.Background:T.Text;}
+    }
+    public void RefreshSettings(bool duringGameplay)
+    { settingsHeading.text=duringGameplay?"PAUSED":"SETTINGS";ButtonText(gm.settingsCloseButton,duringGameplay?"RESUME":"DONE");RefreshInputLayers(); }
 
-        SetAnchoredRect(topBar, new Vector2(0.035f, 0.845f), new Vector2(0.965f, 0.955f), Vector2.zero, Vector2.zero);
-        Image background = topBar.GetComponent<Image>();
-        if (background == null)
-            background = topBar.gameObject.AddComponent<Image>();
-        background.color = Surface;
-        background.raycastTarget = false;
-        ApplyRoundedSprite(background);
-
-        gameplayTopOutline = topBar.GetComponent<Outline>();
-        if (gameplayTopOutline == null)
-            gameplayTopOutline = topBar.gameObject.AddComponent<Outline>();
-        gameplayTopOutline.effectColor = new Color(0f, 0.96f, 1f, 0.7f);
-        gameplayTopOutline.effectDistance = new Vector2(2f, -2f);
-
-        StyleGameplayLabel(gameplayLevelText, new Vector2(0.25f, 0.56f), new Vector2(260f, 118f), 32f);
-        StyleGameplayLabel(gameplayTimerText, new Vector2(0.5f, 0.56f), new Vector2(250f, 124f), 40f);
-        StyleGameplayLabel(gameplayObjectiveText, new Vector2(0.75f, 0.56f), new Vector2(260f, 118f), 32f);
-
-        StyleGameplayButton(gameplayHomeButton, "MENU", new Vector2(0.065f, 0.55f), Cyan);
-        StyleGameplayButton(gameplaySettingsButton, "PAUSE", new Vector2(0.935f, 0.55f), Pink);
-
-        CreateProgressTrack(
-            "TimerProgress",
-            topBar,
-            new Vector2(0.38f, 0.105f),
-            new Vector2(0.62f, 0.145f),
-            Cyan,
-            out timerFill);
-        CreateProgressTrack(
-            "ObjectiveProgress",
-            topBar,
-            new Vector2(0.65f, 0.105f),
-            new Vector2(0.85f, 0.145f),
-            Cyan,
-            out objectiveFill);
+    public void RefreshInputLayers()
+    {
+        // A newly enabled Graphic has depth -1 until Unity renders it. Disable
+        // the underlay immediately so a second touch cannot pass through during
+        // that frame. This changes input only, never simulation or pause state.
+        bool dialog=IsAbandonConfirmationVisible, paused=gm.settingsPanel.activeSelf;
+        bool covered=dialog||paused||IsShopVisible;
+        SetInput(gm.mainMenuPanel,!covered);SetInput(gm.gameplayPanel,!covered);
+        SetInput(gm.successPanel,!covered);SetInput(gm.failPanel,!covered);
+        SetInput(gm.settingsPanel,!dialog);SetInput(shopPanel,!dialog&&!paused);
+        SetInput(abandonDialog,true);
+    }
+    private static void SetInput(GameObject panel,bool allowed)
+    {
+        if(panel==null)return;
+        var group=panel.GetComponent<CanvasGroup>();if(group==null)group=panel.AddComponent<CanvasGroup>();
+        group.interactable=allowed;group.blocksRaycasts=allowed;
     }
 
-    private static void StyleGameplayLabel(TMP_Text text, Vector2 anchor, Vector2 size, float fontSize)
+    private ResultView CreateResult(RectTransform root,bool success)
     {
-        if (text == null)
-            return;
-        SetPointRect(text.rectTransform, anchor, size, Vector2.zero);
-        text.fontSize = fontSize;
-        text.fontStyle = FontStyles.Bold;
-        text.alignment = TextAlignmentOptions.Center;
-        text.textWrappingMode = TextWrappingModes.NoWrap;
-        text.overflowMode = TextOverflowModes.Overflow;
-        text.raycastTarget = false;
+        var v=new ResultView();v.eyebrow=Eyebrow(root,"CAMPAIGN / RUN REPORT");
+        v.emblem=Shape("ResultMark",root,success?NeonShape.Kind.Check:NeonShape.Kind.Reticle,success?T.Primary:T.Danger,4);At(v.emblem.rectTransform,0,1,130,-211,128,128);
+        v.title=Txt("ResultTitle",root,"",T.headingSize,T.pageMargin,-320,940,210);v.title.fontStyle=FontStyles.Bold;v.title.textWrappingMode=TextWrappingModes.Normal;
+        v.description=Txt("ResultDescription",root,"",32,T.pageMargin,-565,940,118,T.Muted);v.description.textWrappingMode=TextWrappingModes.Normal;
+        v.amountLabel=Txt("AmountLabel",root,"",24,T.pageMargin,-756,940,44,T.Muted);v.amountLabel.characterSpacing=3;
+        v.amount=Txt("Amount",root,"",112,T.pageMargin,-806,940,140,T.Primary);v.amount.fontStyle=FontStyles.Bold;
+        Hairline(root,1000);
+        v.leftLabel=Txt("LeftLabel",root,"",24,T.pageMargin,-1050,460,40,T.Muted);
+        v.leftValue=Txt("LeftValue",root,"",45,T.pageMargin,-1105,460,72);
+        v.rightLabel=Txt("RightLabel",root,"",24,558,-1050,458,40,T.Muted);
+        v.rightValue=Txt("RightValue",root,"",45,558,-1105,458,72);
+        v.footer=Txt("ResultFooter",root,"",28,T.pageMargin,-1220,940,112,T.Muted);v.footer.textWrappingMode=TextWrappingModes.Normal;
+        var primary=WideButton("ResultPrimary",root,"UPGRADES",210,true);var home=WideButton("ResultHome",root,"RETURN HOME",72,false);
+        if(success){gm.successLevelText=v.title;gm.successNextButton=primary;gm.successMenuButton=home;}
+        else {gm.failLevelText=v.title;gm.failReasonText=v.description;gm.failPrimaryButton=primary;gm.failMenuButton=home;}
+        return v;
+    }
+    public void ShowLevelComplete(ActiveRunData run,int completed,int next,long reward,bool debug=false)
+    {
+        var v=successView;v.emblem.kind=NeonShape.Kind.Check;At(v.emblem.rectTransform,0,1,130,-211,128,128);v.emblem.SetVerticesDirty();v.title.fontSize=T.headingSize;v.eyebrow.text=debug?"SANDBOX / LEVEL COMPLETE":"CAMPAIGN / LEVEL COMPLETE";
+        v.title.text=$"LEVEL {completed:00}\nCOMPLETE.";v.description.text=debug?"Practice complete. Your real run is untouched.":$"Next up: Level {next:00}.\nYour health and reserve carry forward.";
+        v.emblem.color=T.Primary;v.amount.color=T.Primary;v.amountLabel.text=debug?"PRACTICE SESSION":"LEVEL REWARD / PENDING";v.amount.text=debug?"WELL PLAYED":$"+{reward:N0}<size=34> COINS</size>";
+        v.amount.fontSize=debug?66:112;v.leftLabel.text="HEALTH CARRIED";v.leftValue.text=$"{run.currentHealth} / {run.upgrades.maxHealth}";
+        v.rightLabel.text="RESERVE CARRIED";v.rightValue.text=$"{run.currentReserveSeconds:0.0}<size=28>s</size>";
+        v.footer.text=debug?"No coins or progression changed.":$"{run.pendingCoins:N0} pending run coins\nBanked when this run ends.";
+    }
+    public void ShowRunSummary(RunSummaryData summary)
+    {
+        var v=summary.campaignCompleted?successView:failView;bool win=summary.campaignCompleted;
+        v.eyebrow.text=win?"NEON REFLEX / CAMPAIGN COMPLETE":"CAMPAIGN / RUN REPORT";
+        v.title.text=win?"CAMPAIGN\nCONQUERED.":summary.reason=="RUN ABANDONED"?"RUN\nCLOSED.":"RUN\nENDED.";
+        v.title.fontSize=win?78:T.headingSize;
+        v.emblem.kind=win?NeonShape.Kind.Reticle:NeonShape.Kind.Reverse;
+        At(v.emblem.rectTransform,win?1:0,1,win?-198:130,-211,win?220:128,win?220:128);
+        v.emblem.SetVerticesDirty();
+        v.description.text=win?"Every level cleared. Precision, all the way.":summary.reason=="RUN ABANDONED"?"You ended this run.\nYour completed levels still count.":summary.reason.Contains("HEALTH")?"Health depleted.\nTake what you earned. Come back stronger.":"Reserve depleted.\nTake what you earned. Come back stronger.";
+        v.emblem.color=win?T.Primary:summary.reason=="RUN ABANDONED"?T.Muted:summary.reason.Contains("HEALTH")?T.Danger:T.Reserve;
+        v.amountLabel.text="COINS EARNED / BANKED";v.amount.text=$"+{summary.totalEarned:N0}";v.amount.fontSize=112;v.amount.color=T.Primary;
+        v.leftLabel.text="LEVEL REACHED";v.leftValue.text=summary.highestLevelEntered.ToString("00");v.rightLabel.text="LEVELS COMPLETED";v.rightValue.text=summary.levelsCompleted.ToString("00");
+        v.footer.text=win?$"{summary.runLevelRewards:N0} level rewards + {summary.completionBonus:N0} completion bonus\nPermanent balance: {summary.newWalletBalance:N0} coins":$"Permanent balance: {summary.newWalletBalance:N0} coins\nPut your earnings into your next run.";
     }
 
-    private void StyleGameplayButton(Button button, string label, Vector2 anchor, Color accent)
+    public void ShowDebugRunEnded(string reason,ActiveRunData run,int level)
     {
-        if (button == null)
-            return;
-
-        SetPointRect(button.GetComponent<RectTransform>(), anchor, new Vector2(108f, 76f), Vector2.zero);
-        Image image = button.GetComponent<Image>();
-        if (image != null)
-        {
-            image.color = new Color(accent.r * 0.16f, accent.g * 0.16f, accent.b * 0.16f, 1f);
-            ApplyRoundedSprite(image);
-        }
-
-        Outline outline = button.GetComponent<Outline>();
-        if (outline == null)
-            outline = button.gameObject.AddComponent<Outline>();
-        outline.effectColor = new Color(accent.r, accent.g, accent.b, 0.72f);
-        outline.effectDistance = new Vector2(2f, -2f);
-
-        SetButtonLabel(button, label);
-        TMP_Text text = button.GetComponentInChildren<TMP_Text>();
-        if (text != null)
-        {
-            text.fontSize = 19f;
-            text.fontStyle = FontStyles.Bold;
-            text.characterSpacing = 1.5f;
-            text.color = Color.white;
-        }
-    }
-
-    private void CreateHudMetric(
-        string objectName,
-        Transform parent,
-        Vector2 anchorMin,
-        Vector2 anchorMax,
-        string label,
-        Color accent,
-        out TMP_Text valueText,
-        out Image fill)
-    {
-        GameObject metric = CreatePanel(objectName, parent, RaisedSurface);
-        SetAnchoredRect(
-            metric.GetComponent<RectTransform>(),
-            anchorMin,
-            anchorMax,
-            new Vector2(7f, 8f),
-            new Vector2(-7f, -8f));
-        Image metricImage = metric.GetComponent<Image>();
-        metricImage.raycastTarget = false;
-        ApplyRoundedSprite(metricImage);
-
-        TMP_Text labelText = CreateText("Label", metric.transform, 16f, Muted);
-        labelText.text = label;
-        labelText.fontStyle = FontStyles.Bold;
-        labelText.characterSpacing = 2.2f;
-        SetPointRect(labelText.rectTransform, new Vector2(0.5f, 0.73f), new Vector2(260f, 25f), Vector2.zero);
-
-        valueText = CreateText("Value", metric.transform, 31f, Color.white);
-        valueText.fontStyle = FontStyles.Bold;
-        SetPointRect(valueText.rectTransform, new Vector2(0.5f, 0.43f), new Vector2(260f, 48f), Vector2.zero);
-
-        CreateProgressTrack(
-            "Progress",
-            metric.transform as RectTransform,
-            new Vector2(0.09f, 0.11f),
-            new Vector2(0.91f, 0.18f),
-            accent,
-            out fill);
+        var v=failView;v.eyebrow.text="DEBUG SANDBOX / PRACTICE REPORT";
+        v.title.text="PRACTICE\nCOMPLETE.";v.description.text=reason=="HEALTH DEPLETED"?"Health depleted. Your real run is untouched.":"Reserve depleted. Your real run is untouched.";
+        v.amountLabel.text="SANDBOX / NO REWARDS";v.amount.text="NO COINS BANKED";v.amount.fontSize=58;v.amount.color=T.Muted;
+        v.leftLabel.text="LEVEL PRACTICED";v.leftValue.text=level.ToString("00");v.rightLabel.text="CORRECT TARGETS";v.rightValue.text=run.levelState.objectiveProgress.ToString();
+        v.footer.text="No coins, upgrades or saved run state changed.";v.emblem.color=T.Muted;
     }
 
     private void CreateShop()
     {
-        shopPanel = CreatePanel("RogueliteShop", canvasRoot, Dark);
-        Stretch(shopPanel.GetComponent<RectTransform>());
-
-        GameObject header = CreatePanel("Header", shopPanel.transform, Surface);
-        SetAnchoredRect(
-            header.GetComponent<RectTransform>(),
-            new Vector2(0f, 0.82f),
-            Vector2.one,
-            Vector2.zero,
-            Vector2.zero);
-        header.GetComponent<Image>().raycastTarget = false;
-
-        GameObject topAccent = CreatePanel("TopAccent", header.transform, Cyan);
-        SetAnchoredRect(
-            topAccent.GetComponent<RectTransform>(),
-            new Vector2(0f, 0.985f),
-            Vector2.one,
-            Vector2.zero,
-            Vector2.zero);
-        topAccent.GetComponent<Image>().raycastTarget = false;
-
-        TMP_Text eyebrow = CreateText("Eyebrow", header.transform, 17f, Muted);
-        eyebrow.text = "NEON REFLEX // PERMANENT SYSTEMS";
-        eyebrow.alignment = TextAlignmentOptions.MidlineLeft;
-        eyebrow.fontStyle = FontStyles.Bold;
-        eyebrow.characterSpacing = 2.5f;
-        SetPointRect(eyebrow.rectTransform, new Vector2(0.43f, 0.78f), new Vector2(520f, 34f), Vector2.zero);
-
-        TMP_Text title = CreateText("Title", header.transform, 54f, Color.white);
-        title.text = "UPGRADE <color=#00F5FF>LAB</color>";
-        title.fontStyle = FontStyles.Bold;
-        title.alignment = TextAlignmentOptions.MidlineLeft;
-        title.characterSpacing = 0.6f;
-        SetPointRect(title.rectTransform, new Vector2(0.43f, 0.55f), new Vector2(520f, 78f), Vector2.zero);
-
-        TMP_Text subtitle = CreateText("Subtitle", header.transform, 21f, Muted);
-        subtitle.text = "Build the next run before it begins.";
-        subtitle.alignment = TextAlignmentOptions.MidlineLeft;
-        SetPointRect(subtitle.rectTransform, new Vector2(0.43f, 0.32f), new Vector2(520f, 38f), Vector2.zero);
-
-        Button back = CreateButton("Back", header.transform, "BACK", new Color(0.07f, 0.09f, 0.19f, 1f));
-        SetPointRect(back.GetComponent<RectTransform>(), new Vector2(0.09f, 0.55f), new Vector2(150f, 78f), Vector2.zero);
-        StyleOutlinedButton(back, Cyan);
-        back.onClick.AddListener(() => HideShop(true));
-
-        GameObject walletPanel = CreatePanel("Wallet", header.transform, new Color(0.09f, 0.075f, 0.025f, 1f));
-        SetPointRect(walletPanel.GetComponent<RectTransform>(), new Vector2(0.84f, 0.55f), new Vector2(245f, 112f), Vector2.zero);
-        Image walletBackground = walletPanel.GetComponent<Image>();
-        walletBackground.raycastTarget = false;
-        ApplyRoundedSprite(walletBackground);
-        Outline walletOutline = walletPanel.AddComponent<Outline>();
-        walletOutline.effectColor = new Color(Gold.r, Gold.g, Gold.b, 0.75f);
-        walletOutline.effectDistance = new Vector2(2f, -2f);
-
-        walletText = CreateText("Value", walletPanel.transform, 34f, Color.white);
-        walletText.fontStyle = FontStyles.Bold;
-        Stretch(walletText.rectTransform);
-
-        shopNoticeText = CreateText("ShopNotice", shopPanel.transform, 19f, Muted);
-        shopNoticeText.fontStyle = FontStyles.Bold;
-        shopNoticeText.characterSpacing = 1.5f;
-        SetPointRect(shopNoticeText.rectTransform, new Vector2(0.5f, 0.795f), new Vector2(940f, 45f), Vector2.zero);
-
-        for (int i = 0; i < 4; i++)
-        {
-            UpgradeId id = (UpgradeId)i;
-            float anchorY = 0.67f - i * 0.15f;
-            upgradeCards[id] = CreateUpgradeCard(id, new Vector2(0.5f, anchorY), UpgradeAccent(id));
-        }
-
-        shopFeedbackText = CreateText("Feedback", shopPanel.transform, 18f, Muted);
-        shopFeedbackText.fontStyle = FontStyles.Bold;
-        shopFeedbackText.characterSpacing = 1.6f;
-        SetPointRect(shopFeedbackText.rectTransform, new Vector2(0.5f, 0.065f), new Vector2(900f, 42f), Vector2.zero);
-        shopFeedbackText.text = "UPGRADES ARE PERMANENT • EFFECTS SNAPSHOT WHEN A NEW RUN STARTS";
-
-        shopPanel.SetActive(false);
+        shopPanel=Panel("PermanentUpgrades",canvas,T.Background,true).gameObject;Fill((RectTransform)shopPanel.transform);
+        shop=Rect("SafeContent",shopPanel.transform);Fill(shop);shop.gameObject.AddComponent<NeonSafeArea>();shop.gameObject.AddComponent<NeonPanelEntrance>();
+        Eyebrow(shop,"NEON REFLEX / PERMANENT UPGRADES");
+        Txt("ShopTitle",shop,"BUILD YOUR\nNEXT RUN.",80,T.pageMargin,-166,900,195).fontStyle=FontStyles.Bold;
+        wallet=Txt("BankedCoins",shop,"",30,T.pageMargin,-376,940,54,T.Primary);
+        shopNotice=Txt("ShopNotice",shop,"",27,T.pageMargin,-440,940,76,T.Muted);shopNotice.textWrappingMode=TextWrappingModes.Normal;
+        var viewport=Panel("UpgradeViewport",shop,Color.clear,true);Fill(viewport.rectTransform,T.pageMargin,240,T.pageMargin,550);
+        viewport.gameObject.AddComponent<RectMask2D>();
+        var list=Rect("UpgradeList",viewport.transform);list.anchorMin=new Vector2(0,1);list.anchorMax=new Vector2(1,1);list.pivot=new Vector2(.5f,1);list.sizeDelta=new Vector2(0,1120);list.anchoredPosition=Vector2.zero;
+        var scroll=viewport.gameObject.AddComponent<ScrollRect>();scroll.content=list;scroll.viewport=viewport.rectTransform;scroll.horizontal=false;scroll.vertical=true;scroll.movementType=ScrollRect.MovementType.Clamped;scroll.scrollSensitivity=40;
+        for(int i=0;i<4;i++)cards[(UpgradeId)i]=CreateUpgrade((UpgradeId)i,list,i);
+        shopFeedback=Txt("PurchaseFeedback",shop,"PERMANENT BENEFITS. APPLIED TO NEW RUNS.",23,T.pageMargin,220,940,54,T.Muted,0,0);
+        var back=WideButton("ShopBack",shop,"RETURN HOME",64,false);back.onClick.AddListener(()=>HideShop(true));shopPanel.SetActive(false);
     }
-
+    private UpgradeView CreateUpgrade(UpgradeId id,Transform parent,int index)
+    {
+        var v=new UpgradeView{accent=id==UpgradeId.MaximumHealth?T.Primary:id==UpgradeId.StartingReserve?T.Reserve:id==UpgradeId.GridStabilizer?T.Target:T.Reverse};
+        var row=Rect(id.ToString(),parent);Box(row,0,1-(index+1)*.25f,1,1-index*.25f);
+        var line=Rule("Divider",row);Box(line.rectTransform,0,1,1,1);line.rectTransform.sizeDelta=new Vector2(0,2);
+        var icon=Shape("UpgradeGlyph",row,(NeonShape.Kind)((int)NeonShape.Kind.Health+index),v.accent,3);At(icon.rectTransform,0,1,35,-61,60,60);
+        v.title=Txt("Title",row,"",34,100,-20,670,57);v.title.fontStyle=FontStyles.Bold;
+        v.tier=Txt("Tier",row,"",23,100,-76,550,35,T.Muted);
+        v.description=Txt("Description",row,"",27,100,-131,790,43,T.Muted);
+        v.benefit=Txt("Benefit",row,"",30,100,-188,540,54,v.accent);
+        v.status=Txt("Status",row,"",21,100,-242,790,32,T.Muted);
+        v.buy=Button("Purchase",row,"",false);At((RectTransform)v.buy.transform,1,1,-119,-213,236,96);
+        var bt=v.buy.GetComponentInChildren<TMP_Text>();bt.fontSize=28;bt.alignment=TextAlignmentOptions.Center;Fill(bt.rectTransform,8,0,8,0);
+        v.progress=Track("TierProgress",row,new Vector2(0,-132),70,4);
+        v.buy.onClick.AddListener(()=>
+        {
+            if(purchaseRequested!=null&&purchaseRequested(id))
+            { RefreshShop();v.status.text="INSTALLED / NEXT RUN UPDATED";v.status.color=v.accent;shopFeedback.text=v.title.text+" INSTALLED";shopFeedback.color=v.accent;feedbackUntil=Time.unscaledTime+1.8f; }
+        });return v;
+    }
+    public void ShowShop(GameConfig gameConfig,PlayerProfileData player,bool activeRun)
+    { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop();shopPanel.SetActive(true);shopPanel.transform.SetAsLastSibling();RefreshInputLayers(); }
+    public void RefreshShop(GameConfig gameConfig,PlayerProfileData player,bool activeRun)
+    { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop(); }
     private void RefreshShop()
     {
-        long coins = Math.Max(0L, profile?.coins ?? 0L);
-        if (walletText != null)
-            walletText.text = $"<size=16><color=#C7A94A>COINS</color></size>\n{coins:N0}";
-
-        UpdateShopNotice();
-
-        foreach (KeyValuePair<UpgradeId, UpgradeCardView> pair in upgradeCards)
+        long coins=Math.Max(0,profile?.coins??0);wallet.text=$"{coins:N0} <size=24>BANKED COINS</size>";
+        shopNotice.text=hasActiveRun?"RUN ACTIVE / Purchases paused.\nFinish or end your run to make upgrades.":"Spend completed-level earnings on a stronger start.\nEvery upgrade stays with you.";shopNotice.color=hasActiveRun?T.Reserve:T.Muted;
+        foreach(var pair in cards)
         {
-            UpgradeId id = pair.Key;
-            UpgradeCardView card = pair.Value;
-            UpgradeDefinitionData definition = UpgradeCatalog.Get(config, id);
-            UpgradeTierDefinition current = UpgradeCatalog.CurrentTier(config, profile, id);
-            UpgradeTierDefinition next = UpgradeCatalog.NextTier(config, profile, id);
-            int tier = UpgradeCatalog.ClampTier(config, id, UpgradeCatalog.GetTier(profile, id));
-            int maxTier = definition?.tiers?.Count ?? 0;
-            string disabled = UpgradeCatalog.DisabledReason(config, profile, id, hasActiveRun);
-            bool maxed = next == null;
-            bool affordable = next != null && coins >= next.cost;
-            bool available = string.IsNullOrEmpty(disabled);
-
-            string currentEffect = current == null ? BaseEffect(id) : FormatEffect(id, current.effectValue);
-            string nextEffect = next == null ? "MAX" : FormatEffect(id, next.effectValue);
-            card.title.text = definition?.displayName?.ToUpperInvariant() ?? id.ToString().ToUpperInvariant();
-            card.description.text = definition?.description ?? string.Empty;
-            card.effect.text = maxed
-                ? $"<color=#AAB3D0>CURRENT</color>  <b>{currentEffect}</b>"
-                : $"<color=#AAB3D0>{currentEffect}</color>  <color=#{ColorUtility.ToHtmlStringRGB(card.accent)}>→</color>  <b>{nextEffect}</b>";
-            card.tier.text = $"TIER {tier} / {maxTier}";
-            SetFill(card.progressFill, maxTier <= 0 ? 0f : tier / (float)maxTier, card.accent);
-
-            if (maxed)
-            {
-                card.status.text = "SYSTEM MAXED";
-                card.status.color = Lime;
-                SetButtonLabel(card.purchaseButton, "MAXED");
-            }
-            else if (hasActiveRun)
-            {
-                card.status.text = "LOCKED DURING ACTIVE RUN";
-                card.status.color = Pink;
-                SetButtonLabel(card.purchaseButton, "RUN\nACTIVE");
-            }
-            else if (!affordable)
-            {
-                card.status.text = $"NEED {Math.Max(0L, next.cost - coins):N0} MORE COINS";
-                card.status.color = Gold;
-                SetButtonLabel(card.purchaseButton, $"<size=19>INSTALL</size>\n<b>{next.cost:N0}</b> <size=15>COINS</size>");
-            }
-            else if (!available)
-            {
-                card.status.text = disabled.ToUpperInvariant();
-                card.status.color = Danger;
-                SetButtonLabel(card.purchaseButton, "UNAVAILABLE");
-            }
-            else
-            {
-                card.status.text = "READY TO INSTALL";
-                card.status.color = card.accent;
-                SetButtonLabel(card.purchaseButton, $"<size=19>INSTALL</size>\n<b>{next.cost:N0}</b> <size=15>COINS</size>");
-            }
-
-            card.purchaseButton.interactable = available;
-            card.purchaseButton.image.color = available
-                ? new Color(card.accent.r * 0.55f, card.accent.g * 0.55f, card.accent.b * 0.55f, 1f)
-                : new Color(0.12f, 0.13f, 0.2f, 1f);
-            card.icon.color = maxed
-                ? new Color(0.58f, 0.68f, 0.8f, 0.8f)
-                : Color.white;
-            card.background.color = maxed
-                ? new Color(0.04f, 0.05f, 0.1f, 1f)
-                : RaisedSurface;
-            card.outline.effectColor = new Color(card.accent.r, card.accent.g, card.accent.b, maxed ? 0.28f : 0.62f);
+            UpgradeId id=pair.Key;var v=pair.Value;var d=UpgradeCatalog.Get(config,id);var current=UpgradeCatalog.CurrentTier(config,profile,id);var next=UpgradeCatalog.NextTier(config,profile,id);
+            int tier=UpgradeCatalog.ClampTier(config,id,UpgradeCatalog.GetTier(profile,id));int max=d?.tiers?.Count??0;
+            v.title.text=d?.displayName??id.ToString();v.tier.text=$"TIER {tier:00} / {max:00}";
+            v.description.text=d?.description??"";
+            float value=current?.effectValue??(id==UpgradeId.MaximumHealth?config.baseHealth:id==UpgradeId.StartingReserve?config.baseStartingReserveSeconds:id==UpgradeId.GridStabilizer?1:0);
+            v.benefit.text=next==null?Effect(id,value):$"<color=#9EAFAD>{Effect(id,value)}</color>  →  {Effect(id,next.effectValue)}";
+            SetFill(v.progress,tier/(float)Mathf.Max(1,max),v.accent);
+            bool allowed=string.IsNullOrEmpty(UpgradeCatalog.DisabledReason(config,profile,id,hasActiveRun));v.buy.interactable=allowed;
+            v.buy.image.color=allowed?v.accent:T.Raised;v.buy.GetComponentInChildren<TMP_Text>().color=allowed?T.Background:T.Muted;
+            ButtonText(v.buy,next==null?"MAX TIER":hasActiveRun?"RUN ACTIVE":$"{next.cost:N0}\n<size=20>COINS / UPGRADE</size>");
+            v.status.text=next==null?"MAXIMUM BENEFIT REACHED":hasActiveRun?"AVAILABLE AFTER THIS RUN":coins<next.cost?$"{next.cost-coins:N0} MORE COINS NEEDED":"READY TO UPGRADE";
+            v.status.color=allowed?v.accent:T.Muted;
         }
     }
-
-    private UpgradeCardView CreateUpgradeCard(UpgradeId id, Vector2 anchor, Color accent)
+    private string Effect(UpgradeId id,float value)
     {
-        var view = new UpgradeCardView { accent = accent };
-        GameObject card = CreatePanel(id + "Card", shopPanel.transform, RaisedSurface);
-        view.root = card.GetComponent<RectTransform>();
-        SetPointRect(view.root, anchor, new Vector2(960f, 260f), Vector2.zero);
-        view.background = card.GetComponent<Image>();
-        ApplyRoundedSprite(view.background);
-        view.outline = card.AddComponent<Outline>();
-        view.outline.effectColor = new Color(accent.r, accent.g, accent.b, 0.62f);
-        view.outline.effectDistance = new Vector2(2f, -2f);
-
-        GameObject accentRail = CreatePanel("AccentRail", card.transform, accent);
-        SetAnchoredRect(
-            accentRail.GetComponent<RectTransform>(),
-            new Vector2(0f, 0.08f),
-            new Vector2(0.008f, 0.92f),
-            new Vector2(2f, 0f),
-            new Vector2(2f, 0f));
-        accentRail.GetComponent<Image>().raycastTarget = false;
-
-        GameObject frame = CreatePanel("IconFrame", card.transform, new Color(0.008f, 0.012f, 0.045f, 1f));
-        SetPointRect(frame.GetComponent<RectTransform>(), new Vector2(0.12f, 0.5f), new Vector2(210f, 210f), Vector2.zero);
-
-        Image frameImage = frame.GetComponent<Image>();
-        frameImage.raycastTarget = false;
-        ApplyRoundedSprite(frameImage);
-
-        Outline frameOutline = frame.AddComponent<Outline>();
-        frameOutline.effectColor = new Color(accent.r, accent.g, accent.b, 0.72f);
-        frameOutline.effectDistance = new Vector2(2f, -2f);
-
-        Sprite sprite = Resources.Load<Sprite>(UpgradeIconResourcePath(id));
-        GameObject artwork = new GameObject("Artwork", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        artwork.transform.SetParent(frame.transform, false);
-        view.icon = artwork.GetComponent<Image>();
-        view.icon.sprite = sprite;
-        view.icon.color = Color.white;
-        view.icon.preserveAspect = true;
-        view.icon.raycastTarget = false;
-        SetRect(view.icon.rectTransform, new Vector2(194f, 194f), Vector2.zero);
-
-        if (sprite == null)
-            Debug.LogWarning($"Missing upgrade icon at Resources/{UpgradeIconResourcePath(id)}");
-
-        view.title = CreateText("Title", card.transform, 31f, Color.white);
-        view.title.alignment = TextAlignmentOptions.MidlineLeft;
-        view.title.fontStyle = FontStyles.Bold;
-        view.title.characterSpacing = 0.8f;
-        SetPointRect(view.title.rectTransform, new Vector2(0.43f, 0.76f), new Vector2(350f, 46f), Vector2.zero);
-
-        GameObject tierChip = CreatePanel("TierChip", card.transform, new Color(0.025f, 0.035f, 0.085f, 1f));
-        SetPointRect(tierChip.GetComponent<RectTransform>(), new Vector2(0.68f, 0.76f), new Vector2(132f, 38f), Vector2.zero);
-        Image tierChipImage = tierChip.GetComponent<Image>();
-        tierChipImage.raycastTarget = false;
-        ApplyRoundedSprite(tierChipImage);
-        view.tier = CreateText("Text", tierChip.transform, 16f, Muted);
-        view.tier.fontStyle = FontStyles.Bold;
-        view.tier.characterSpacing = 1.2f;
-        Stretch(view.tier.rectTransform);
-
-        view.description = CreateText("Description", card.transform, 21f, new Color(0.78f, 0.82f, 0.92f, 1f));
-        view.description.alignment = TextAlignmentOptions.MidlineLeft;
-        view.description.textWrappingMode = TextWrappingModes.NoWrap;
-        SetPointRect(view.description.rectTransform, new Vector2(0.49f, 0.55f), new Vector2(470f, 38f), Vector2.zero);
-
-        view.effect = CreateText("Effect", card.transform, 23f, Color.white);
-        view.effect.alignment = TextAlignmentOptions.MidlineLeft;
-        SetPointRect(view.effect.rectTransform, new Vector2(0.49f, 0.36f), new Vector2(470f, 40f), Vector2.zero);
-
-        view.status = CreateText("Status", card.transform, 15f, accent);
-        view.status.alignment = TextAlignmentOptions.MidlineLeft;
-        view.status.fontStyle = FontStyles.Bold;
-        view.status.characterSpacing = 1.4f;
-        SetPointRect(view.status.rectTransform, new Vector2(0.49f, 0.2f), new Vector2(470f, 30f), Vector2.zero);
-
-        CreateProgressTrack(
-            "TierProgress",
-            view.root,
-            new Vector2(0.25f, 0.085f),
-            new Vector2(0.75f, 0.125f),
-            accent,
-            out view.progressFill);
-
-        view.purchaseButton = CreateButton("Purchase", card.transform, "INSTALL", accent);
-        SetPointRect(view.purchaseButton.GetComponent<RectTransform>(), new Vector2(0.865f, 0.5f), new Vector2(210f, 122f), Vector2.zero);
-        StyleOutlinedButton(view.purchaseButton, accent);
-        TMP_Text purchaseLabel = view.purchaseButton.GetComponentInChildren<TMP_Text>();
-        if (purchaseLabel != null)
-            purchaseLabel.fontSize = 24f;
-
-        UpgradeId capturedId = id;
-        view.purchaseButton.onClick.AddListener(() =>
-        {
-            if (purchaseRequested != null && purchaseRequested(capturedId))
-            {
-                RefreshShop();
-                PlayPurchaseFeedback(capturedId);
-            }
-        });
-        return view;
+        switch(id){case UpgradeId.MaximumHealth:return $"{Mathf.Clamp(Mathf.RoundToInt(value),1,config.maximumHealthCap)} HP";case UpgradeId.StartingReserve:return $"{value:0.#}s";case UpgradeId.GridStabilizer:return $"{value*100:0}% speed";default:return $"+{value:0.#}s cooldown";}
     }
-
-    private static Color UpgradeAccent(UpgradeId id)
-    {
-        switch (id)
-        {
-            case UpgradeId.MaximumHealth:
-                return Pink;
-            case UpgradeId.StartingReserve:
-                return Cyan;
-            case UpgradeId.GridStabilizer:
-                return Lime;
-            default:
-                return Pink;
-        }
-    }
-
-    private void UpdateShopNotice()
-    {
-        if (shopNoticeText == null)
-            return;
-        shopNoticeText.text = hasActiveRun
-            ? "PURCHASES LOCKED  •  FINISH OR ABANDON THE ACTIVE RUN"
-            : "SELECT A SYSTEM  •  REVIEW THE CHANGE  •  INSTALL PERMANENTLY";
-        shopNoticeText.color = hasActiveRun ? Pink : Muted;
-    }
-
-    private void PlayPurchaseFeedback(UpgradeId id)
-    {
-        if (!upgradeCards.TryGetValue(id, out UpgradeCardView card))
-            return;
-        if (purchaseFeedbackCoroutine != null)
-            StopCoroutine(purchaseFeedbackCoroutine);
-        purchaseFeedbackCoroutine = StartCoroutine(PurchaseFeedbackRoutine(card));
-    }
-
-    private IEnumerator PurchaseFeedbackRoutine(UpgradeCardView card)
-    {
-        if (shopFeedbackText != null)
-        {
-            shopFeedbackText.text = $"{card.title.text} INSTALLED  •  NEXT RUN UPDATED";
-            shopFeedbackText.color = card.accent;
-        }
-
-        float elapsed = 0f;
-        const float duration = 0.24f;
-        while (elapsed < duration)
-        {
-            elapsed += Time.unscaledDeltaTime;
-            float t = Mathf.Clamp01(elapsed / duration);
-            float scale = t < 0.42f
-                ? Mathf.Lerp(1f, 1.025f, t / 0.42f)
-                : Mathf.Lerp(1.025f, 1f, (t - 0.42f) / 0.58f);
-            card.root.localScale = Vector3.one * scale;
-            yield return null;
-        }
-        card.root.localScale = Vector3.one;
-
-        float hold = 0f;
-        while (hold < 1.15f)
-        {
-            hold += Time.unscaledDeltaTime;
-            yield return null;
-        }
-        if (shopFeedbackText != null)
-        {
-            shopFeedbackText.text = "UPGRADES ARE PERMANENT • EFFECTS SNAPSHOT WHEN A NEW RUN STARTS";
-            shopFeedbackText.color = Muted;
-        }
-        purchaseFeedbackCoroutine = null;
-    }
-
-    private static string UpgradeIconResourcePath(UpgradeId id)
-    {
-        switch (id)
-        {
-            case UpgradeId.MaximumHealth:
-                return "UpgradeIcons/maximum-health";
-            case UpgradeId.StartingReserve:
-                return "UpgradeIcons/starting-reserve";
-            case UpgradeId.GridStabilizer:
-                return "UpgradeIcons/grid-stabilizer";
-            default:
-                return "UpgradeIcons/reverse-resistance";
-        }
-    }
-
-    private string BaseEffect(UpgradeId id)
-    {
-        switch (id)
-        {
-            case UpgradeId.MaximumHealth:
-                return $"{Mathf.Max(1, config?.baseHealth ?? 3)} HP";
-            case UpgradeId.StartingReserve:
-                return $"{Mathf.Max(0f, config?.baseStartingReserveSeconds ?? 15f):0}s";
-            case UpgradeId.GridStabilizer:
-                return "100% SPEED";
-            default:
-                return "+0s COOLDOWN";
-        }
-    }
-
-    private static string FormatEffect(UpgradeId id, float value)
-    {
-        switch (id)
-        {
-            case UpgradeId.MaximumHealth:
-                return $"{Mathf.RoundToInt(value)} HP";
-            case UpgradeId.StartingReserve:
-                return $"{value:0}s";
-            case UpgradeId.GridStabilizer:
-                return $"{value * 100f:0}% SPEED";
-            default:
-                return $"+{value:0}s COOLDOWN";
-        }
-    }
+    void Update()
+    { if(feedbackUntil>0&&Time.unscaledTime>feedbackUntil){feedbackUntil=0;shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;} }
+    public void HideShop(bool notify=false)
+    { feedbackUntil=0;if(shopFeedback!=null){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;}if(shopPanel!=null)shopPanel.SetActive(false);RefreshInputLayers();if(notify)shopClosed?.Invoke(); }
 
     private void CreateAbandonDialog()
     {
-        abandonDialog = CreatePanel("AbandonConfirmation", canvasRoot, new Color(0.01f, 0.01f, 0.04f, 0.99f));
-        Stretch(abandonDialog.GetComponent<RectTransform>());
-        abandonMessage = CreateText("Message", abandonDialog.transform, 38f, Color.white);
-        abandonMessage.textWrappingMode = TextWrappingModes.Normal;
-        SetRect(abandonMessage.rectTransform, new Vector2(900f, 330f), new Vector2(0f, 180f));
-
-        Button confirm = CreateButton("Confirm", abandonDialog.transform, "ABANDON", new Color(0.9f, 0.18f, 0.35f, 1f));
-        SetRect(confirm.GetComponent<RectTransform>(), new Vector2(390f, 104f), new Vector2(-225f, -130f));
-        confirm.onClick.AddListener(() =>
-        {
-            HideAbandonConfirmation();
-            abandonConfirmed?.Invoke();
-        });
-
-        Button cancel = CreateButton("Cancel", abandonDialog.transform, "KEEP RUN", new Color(0.14f, 0.6f, 0.8f, 1f));
-        SetRect(cancel.GetComponent<RectTransform>(), new Vector2(390f, 104f), new Vector2(225f, -130f));
-        cancel.onClick.AddListener(HideAbandonConfirmation);
+        abandonDialog=Panel("AbandonConfirmation",canvas,T.Background,true).gameObject;Fill((RectTransform)abandonDialog.transform);
+        var safe=Rect("SafeContent",abandonDialog.transform);Fill(safe);safe.gameObject.AddComponent<NeonSafeArea>();
+        var body=Rect("Dialog",safe);At(body,.5f,.5f,0,0,952,850);
+        var glyph=Shape("EndGlyph",body,NeonShape.Kind.Reverse,T.Reserve,4);At(glyph.rectTransform,0,1,46,-38,72,72);
+        Txt("Title",body,"END THIS\nRUN?",86,0,-143,930,210).fontStyle=FontStyles.Bold;
+        abandonMessage=Txt("Explanation",body,"",34,0,-387,930,175,T.Muted);abandonMessage.textWrappingMode=TextWrappingModes.Normal;
+        var confirm=Button("ConfirmAbandon",body,"END RUN & BANK COINS",true);At((RectTransform)confirm.transform,.5f,0,0,204,952,120);confirm.image.color=T.Reserve;
+        confirm.onClick.AddListener(()=>{HideAbandonConfirmation();abandonConfirmed?.Invoke();});
+        var cancel=Button("KeepRun",body,"KEEP RUN");At((RectTransform)cancel.transform,.5f,0,0,62,952,112);cancel.onClick.AddListener(HideAbandonConfirmation);
         abandonDialog.SetActive(false);
     }
-
-    private void EnsureHapticsToggle()
-    {
-        if (hapticsToggle == null && settingsRoot != null)
-        {
-            GameObject toggleObject = new GameObject("HapticsToggle", typeof(RectTransform), typeof(Toggle));
-            toggleObject.transform.SetParent(settingsRoot, false);
-            SetRect(toggleObject.GetComponent<RectTransform>(), new Vector2(560f, 88f), new Vector2(0f, -250f));
-            hapticsToggle = toggleObject.GetComponent<Toggle>();
-
-            GameObject box = CreatePanel("Box", toggleObject.transform, new Color(0.08f, 0.09f, 0.18f, 1f));
-            SetRect(box.GetComponent<RectTransform>(), new Vector2(64f, 64f), new Vector2(-220f, 0f));
-            GameObject check = CreatePanel("Checkmark", box.transform, Cyan);
-            RectTransform checkRect = check.GetComponent<RectTransform>();
-            checkRect.anchorMin = new Vector2(0.2f, 0.2f);
-            checkRect.anchorMax = new Vector2(0.8f, 0.8f);
-            checkRect.offsetMin = Vector2.zero;
-            checkRect.offsetMax = Vector2.zero;
-            hapticsToggle.targetGraphic = box.GetComponent<Image>();
-            hapticsToggle.graphic = check.GetComponent<Image>();
-
-            TMP_Text label = CreateText("Label", toggleObject.transform, 31f, Color.white);
-            label.text = "HAPTICS";
-            label.alignment = TextAlignmentOptions.MidlineLeft;
-            SetRect(label.rectTransform, new Vector2(390f, 70f), new Vector2(70f, 0f));
-        }
-
-        if (hapticsToggle != null)
-        {
-            hapticsToggle.onValueChanged.RemoveAllListeners();
-            hapticsToggle.onValueChanged.AddListener(value => hapticsChanged?.Invoke(value));
-        }
-    }
-
-    private void BindButtons()
-    {
-        Bind(startContinueButton, () => startOrContinueRequested?.Invoke());
-        Bind(upgradesButton, () => upgradesRequested?.Invoke());
-        Bind(settingsButton, () => settingsRequested?.Invoke());
-        Bind(abandonButton, ShowAbandonConfirmation);
-    }
-
-    private static void Bind(Button button, Action callback)
-    {
-        if (button == null)
-            return;
-        button.onClick.RemoveAllListeners();
-        button.onClick.AddListener(() => callback?.Invoke());
-    }
-
-    private GameObject CreatePanel(string objectName, Transform parent, Color color)
-    {
-        GameObject child = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        child.transform.SetParent(parent, false);
-        Image image = child.GetComponent<Image>();
-        image.color = color;
-        image.raycastTarget = true;
-        return child;
-    }
-
-    private Button CreateButton(string objectName, Transform parent, string label, Color color)
-    {
-        GameObject child = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
-        child.transform.SetParent(parent, false);
-        Image image = child.GetComponent<Image>();
-        image.color = color;
-        ApplyRoundedSprite(image);
-        Button button = child.GetComponent<Button>();
-        button.targetGraphic = image;
-        ColorBlock colors = button.colors;
-        colors.normalColor = Color.white;
-        colors.highlightedColor = new Color(1f, 1f, 1f, 1f);
-        colors.pressedColor = new Color(0.72f, 0.76f, 0.86f, 1f);
-        colors.selectedColor = Color.white;
-        colors.disabledColor = new Color(0.48f, 0.5f, 0.58f, 0.68f);
-        colors.fadeDuration = 0.08f;
-        button.colors = colors;
-        TMP_Text text = CreateText("Text", child.transform, 28f, Color.white);
-        text.text = label;
-        text.fontStyle = FontStyles.Bold;
-        Stretch(text.rectTransform);
-        return button;
-    }
-
-    private static TMP_Text CreateText(string objectName, Transform parent, float size, Color color)
-    {
-        GameObject child = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-        child.transform.SetParent(parent, false);
-        TMP_Text text = child.GetComponent<TMP_Text>();
-        text.fontSize = size;
-        text.color = color;
-        text.alignment = TextAlignmentOptions.Center;
-        text.raycastTarget = false;
-        return text;
-    }
-
-    private static void SetButtonLabel(Button button, string value)
-    {
-        TMP_Text text = button == null ? null : button.GetComponentInChildren<TMP_Text>();
-        if (text != null)
-            text.text = value;
-    }
-
-    private void StyleOutlinedButton(Button button, Color accent)
-    {
-        if (button == null)
-            return;
-        Image image = button.GetComponent<Image>();
-        if (image != null)
-            ApplyRoundedSprite(image);
-        Outline outline = button.GetComponent<Outline>();
-        if (outline == null)
-            outline = button.gameObject.AddComponent<Outline>();
-        outline.effectColor = new Color(accent.r, accent.g, accent.b, 0.72f);
-        outline.effectDistance = new Vector2(2f, -2f);
-    }
-
-    private void ApplyRoundedSprite(Image image)
-    {
-        if (image == null || buttonSprite == null)
-            return;
-        image.sprite = buttonSprite;
-        image.type = Image.Type.Sliced;
-    }
-
-    private void CreateProgressTrack(
-        string objectName,
-        Transform parent,
-        Vector2 anchorMin,
-        Vector2 anchorMax,
-        Color accent,
-        out Image fill)
-    {
-        GameObject track = CreatePanel(objectName, parent, new Color(0.012f, 0.016f, 0.045f, 1f));
-        SetAnchoredRect(track.GetComponent<RectTransform>(), anchorMin, anchorMax, Vector2.zero, Vector2.zero);
-        Image trackImage = track.GetComponent<Image>();
-        trackImage.raycastTarget = false;
-        ApplyRoundedSprite(trackImage);
-
-        GameObject fillObject = CreatePanel("Fill", track.transform, accent);
-        fill = fillObject.GetComponent<Image>();
-        fill.raycastTarget = false;
-        ApplyRoundedSprite(fill);
-        SetAnchoredRect(fill.rectTransform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero);
-    }
-
-    private static void SetFill(Image fill, float amount, Color color)
-    {
-        if (fill == null)
-            return;
-        float clamped = Mathf.Clamp01(amount);
-        RectTransform rect = fill.rectTransform;
-        rect.anchorMin = Vector2.zero;
-        rect.anchorMax = new Vector2(clamped, 1f);
-        rect.offsetMin = Vector2.zero;
-        rect.offsetMax = Vector2.zero;
-        fill.color = color;
-    }
-
-    private static void Stretch(RectTransform rect)
-    {
-        rect.anchorMin = Vector2.zero;
-        rect.anchorMax = Vector2.one;
-        rect.offsetMin = Vector2.zero;
-        rect.offsetMax = Vector2.zero;
-    }
-
-    private static void SetAnchoredRect(
-        RectTransform rect,
-        Vector2 anchorMin,
-        Vector2 anchorMax,
-        Vector2 offsetMin,
-        Vector2 offsetMax)
-    {
-        rect.anchorMin = anchorMin;
-        rect.anchorMax = anchorMax;
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.offsetMin = offsetMin;
-        rect.offsetMax = offsetMax;
-    }
-
-    private static void SetPointRect(RectTransform rect, Vector2 anchor, Vector2 size, Vector2 position)
-    {
-        rect.anchorMin = anchor;
-        rect.anchorMax = anchor;
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = size;
-        rect.anchoredPosition = position;
-    }
-
-    private static void SetRect(RectTransform rect, Vector2 size, Vector2 position)
-    {
-        rect.anchorMin = new Vector2(0.5f, 0.5f);
-        rect.anchorMax = new Vector2(0.5f, 0.5f);
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = size;
-        rect.anchoredPosition = position;
-    }
+    public void ShowAbandonConfirmation()
+    { abandonMessage.text=$"Your run will end. {pendingCoins:N0} pending coins from completed levels will be banked.\nThe current level earns no coins.";abandonDialog.SetActive(true);abandonDialog.transform.SetAsLastSibling();RefreshInputLayers(); }
+    public void HideAbandonConfirmation(){if(abandonDialog!=null)abandonDialog.SetActive(false);RefreshInputLayers();}
 }

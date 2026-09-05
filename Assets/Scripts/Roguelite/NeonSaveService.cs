@@ -6,6 +6,13 @@ using UnityEngine;
 /// <summary>Owns one atomic JSON envelope so banking and clearing a run cannot diverge.</summary>
 public sealed class NeonSaveService
 {
+    [Serializable]
+    private sealed class ProfileOnlyEnvelope
+    {
+        public int saveVersion;
+        public PlayerProfileData profile;
+    }
+
     public const string FileName = "neon_reflex_save.json";
     public string DirectoryPath { get; }
     public string PrimaryPath => Path.Combine(DirectoryPath, FileName);
@@ -22,17 +29,41 @@ public sealed class NeonSaveService
     {
         envelope = envelope ?? SaveEnvelopeData.CreateDefault(); Normalize(envelope, config);
         Directory.CreateDirectory(DirectoryPath);
-        string json = JsonUtility.ToJson(envelope, true);
+        // Unity serializes a null inline class as a default object. Omitting
+        // activeRun keeps a banked profile unambiguously free of an active run.
+        string json = envelope.activeRun == null
+            ? JsonUtility.ToJson(new ProfileOnlyEnvelope { saveVersion = envelope.saveVersion, profile = envelope.profile }, true)
+            : JsonUtility.ToJson(envelope, true);
         using (var stream = new FileStream(TempPath, FileMode.Create, FileAccess.Write, FileShare.None))
         using (var writer = new StreamWriter(stream)) { writer.Write(json); writer.Flush(); stream.Flush(true); }
         // Do not replace an already-good backup with a corrupt primary.
         if (File.Exists(PrimaryPath) && TryRead(PrimaryPath, out SaveEnvelopeData previous) && previous != null) File.Copy(PrimaryPath, BackupPath, true);
         if (File.Exists(PrimaryPath))
         {
-            try { File.Replace(TempPath, PrimaryPath, null); }
+            try { ReplaceAtomicallyWithRetry(); }
             catch (PlatformNotSupportedException) { File.Copy(TempPath, PrimaryPath, true); File.Delete(TempPath); }
         }
         else File.Move(TempPath, PrimaryPath);
+    }
+
+    private void ReplaceAtomicallyWithRetry()
+    {
+        // A transient Windows file-sharing conflict can reject an otherwise
+        // valid replacement. Retain atomic replacement on every attempt; if
+        // contention persists, preserve the primary and staged file for the
+        // caller's existing dirty-save retry rather than copying over it.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Replace(TempPath, PrimaryPath, null);
+                return;
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                System.Threading.Thread.Sleep(8);
+            }
+        }
     }
     public bool MigrateLegacyPlayerPrefs(SaveEnvelopeData envelope, GameConfig config = null)
     {
@@ -57,9 +88,27 @@ public sealed class NeonSaveService
             string json = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(json)) return false;
             envelope = JsonUtility.FromJson<SaveEnvelopeData>(json);
+            if (envelope != null &&
+                (json.IndexOf("\"activeRun\"", StringComparison.Ordinal) < 0 || IsLegacyInlineNullRun(json, envelope.activeRun)))
+                envelope.activeRun = null;
             return HasRequiredEnvelopeData(json, envelope);
         }
         catch (Exception exception) { Debug.LogWarning("Unable to read Neon Reflex save: " + exception.Message); return false; }
+    }
+
+    private static bool IsLegacyInlineNullRun(string json, ActiveRunData run)
+    {
+        if (run == null || !string.IsNullOrEmpty(run.runId))
+            return false;
+        // Accept only the exact empty object previously emitted by JsonUtility,
+        // including explicit nested fields. A damaged real run must still fail
+        // validation and recover its backup rather than silently disappear.
+        if (json.IndexOf("\"runId\"", StringComparison.Ordinal) < 0 ||
+            json.IndexOf("\"currentLevelId\"", StringComparison.Ordinal) < 0 ||
+            json.IndexOf("\"upgrades\"", StringComparison.Ordinal) < 0 ||
+            json.IndexOf("\"levelState\"", StringComparison.Ordinal) < 0)
+            return false;
+        return string.Equals(JsonUtility.ToJson(run), JsonUtility.ToJson(new ActiveRunData()), StringComparison.Ordinal);
     }
 
     private static bool HasRequiredEnvelopeData(string json, SaveEnvelopeData envelope)

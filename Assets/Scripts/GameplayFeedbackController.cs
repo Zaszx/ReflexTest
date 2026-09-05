@@ -4,34 +4,28 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
+/// <summary>
+/// Rule-change presentation in the existing authorized input-lock windows.
+/// This layer never moves the gameplay root, grid, or any target.
+/// </summary>
 public class GameplayFeedbackController : MonoBehaviour
 {
-    private static readonly Color ReversePink = new Color(1f, 0.08f, 0.48f, 1f);
-    private static readonly Color ReversePinkSoft = new Color(1f, 0.08f, 0.48f, 0.18f);
+    public const float ReverseEntranceDuration = 0.76f;
+    public const float ReverseExitDuration = 0.59f;
 
-    private RectTransform screenRoot;
     private RectTransform visualRoot;
     private Image dimOverlay;
-
     private RectTransform announcementRect;
     private CanvasGroup announcementGroup;
+    private TMP_Text eyebrowText;
     private TMP_Text announcementText;
     private TMP_Text instructionText;
-
-    private RectTransform badgeRect;
-    private CanvasGroup badgeGroup;
-    private TMP_Text badgeText;
-
-    private Vector2 screenBasePosition;
-    private Quaternion screenBaseRotation;
-    private Vector2 badgeBasePosition;
-
+    private Image topRule;
+    private Image bottomRule;
+    private Image[] brackets;
     private Coroutine transitionCoroutine;
-    private Coroutine shakeCoroutine;
-    private Coroutine badgePulseCoroutine;
-    private Coroutine badgeReactionCoroutine;
-    private Coroutine badgeMistakeCoroutine;
     private bool presentationPaused;
+    private int transitionVersion;
 
     private float PresentationDelta => presentationPaused ? 0f : Time.unscaledDeltaTime;
 
@@ -40,421 +34,214 @@ public class GameplayFeedbackController : MonoBehaviour
         presentationPaused = paused;
     }
 
-    public void RestoreReverseActive()
-    {
-        if (visualRoot == null) return;
-        StopPresentationCoroutines();
-        visualRoot.gameObject.SetActive(true);
-        dimOverlay.gameObject.SetActive(false);
-        announcementRect.gameObject.SetActive(false);
-        badgeRect.gameObject.SetActive(true);
-        badgeRect.anchoredPosition = badgeBasePosition;
-        badgeRect.localScale = Vector3.one;
-        badgeGroup.alpha = 1f;
-        badgePulseCoroutine = StartCoroutine(BadgePulseRoutine());
-    }
-
     public void Initialize(RectTransform gameplayRoot)
     {
         if (visualRoot != null || gameplayRoot == null) return;
-
-        screenRoot = gameplayRoot;
-        screenBasePosition = screenRoot.anchoredPosition;
-        screenBaseRotation = screenRoot.localRotation;
-
-        visualRoot = CreateRect("GameplayFeedback", screenRoot);
+        visualRoot = CreateRect("GameplayFeedback", gameplayRoot);
         StretchToParent(visualRoot);
         visualRoot.SetAsLastSibling();
+        CanvasGroup layer = visualRoot.gameObject.AddComponent<CanvasGroup>();
+        layer.blocksRaycasts = false;
+        layer.interactable = false;
 
-        dimOverlay = CreateImage("ReverseDim", visualRoot, Color.clear);
+        dimOverlay = CreateImage("RuleDim", visualRoot, Color.clear);
         StretchToParent(dimOverlay.rectTransform);
 
-        announcementRect = CreateRect("ReverseAnnouncement", visualRoot);
-        SetCenteredRect(announcementRect, new Vector2(920f, 240f), Vector2.zero);
+        announcementRect = CreateRect("RuleAnnouncement", visualRoot);
+        announcementRect.anchorMin = new Vector2(0.06f, 0.5f);
+        announcementRect.anchorMax = new Vector2(0.94f, 0.5f);
+        announcementRect.sizeDelta = new Vector2(0f, 304f);
+        announcementRect.anchoredPosition = Vector2.zero;
         announcementGroup = announcementRect.gameObject.AddComponent<CanvasGroup>();
+        announcementGroup.blocksRaycasts = false;
+        announcementGroup.interactable = false;
 
-        announcementText = CreateText("Title", announcementRect, 112f, ReversePink);
-        SetCenteredRect(announcementText.rectTransform, new Vector2(920f, 145f), new Vector2(0f, 35f));
+        Image plate = CreateImage("InkPlate", announcementRect, NeonTheme.T.Background);
+        StretchToParent(plate.rectTransform);
+        eyebrowText = CreateText("Eyebrow", announcementRect, 23f, NeonTheme.T.Muted);
+        PlaceText(eyebrowText.rectTransform, 40f, 99f, 36f);
+        eyebrowText.characterSpacing = 6f;
+
+        announcementText = CreateText("Title", announcementRect, 86f, NeonTheme.T.Reverse);
+        PlaceText(announcementText.rectTransform, 28f, 19f, 112f);
         announcementText.fontStyle = FontStyles.Bold;
-        Shadow titleShadow = announcementText.gameObject.AddComponent<Shadow>();
-        titleShadow.effectColor = new Color(0.35f, 0f, 0.18f, 0.9f);
-        titleShadow.effectDistance = new Vector2(7f, -7f);
+        announcementText.characterSpacing = 3f;
 
-        instructionText = CreateText("Instruction", announcementRect, 38f, Color.white);
-        SetCenteredRect(instructionText.rectTransform, new Vector2(800f, 65f), new Vector2(0f, -72f));
-        instructionText.fontStyle = FontStyles.Bold;
-        instructionText.characterSpacing = 5f;
+        instructionText = CreateText("Instruction", announcementRect, 36f, NeonTheme.T.Text);
+        PlaceText(instructionText.rectTransform, 28f, -75f, 64f);
 
-        badgeRect = CreateRect("ReverseBadge", visualRoot);
-        badgeRect.anchorMin = new Vector2(0.5f, 0.735f);
-        badgeRect.anchorMax = new Vector2(0.5f, 0.735f);
-        badgeRect.pivot = new Vector2(0.5f, 0.5f);
-        badgeRect.sizeDelta = new Vector2(380f, 70f);
-        badgeRect.anchoredPosition = Vector2.zero;
-        badgeBasePosition = badgeRect.anchoredPosition;
+        topRule = CreateImage("TopRule", announcementRect, NeonTheme.T.Reverse);
+        SetRule(topRule.rectTransform, 1f);
+        bottomRule = CreateImage("BottomRule", announcementRect, NeonTheme.T.Reverse);
+        SetRule(bottomRule.rectTransform, 0f);
 
-        Image badgeBackground = badgeRect.gameObject.AddComponent<Image>();
-        badgeBackground.color = new Color(0.12f, 0.01f, 0.07f, 0.9f);
-        badgeBackground.raycastTarget = false;
-        Outline badgeOutline = badgeRect.gameObject.AddComponent<Outline>();
-        badgeOutline.effectColor = new Color(1f, 0.08f, 0.48f, 0.8f);
-        badgeOutline.effectDistance = new Vector2(3f, -3f);
-
-        badgeGroup = badgeRect.gameObject.AddComponent<CanvasGroup>();
-        badgeText = CreateText("Text", badgeRect, 40f, ReversePink);
-        StretchToParent(badgeText.rectTransform);
-        badgeText.fontStyle = FontStyles.Bold;
-        badgeText.characterSpacing = 4f;
-        badgeText.text = "REVERSE";
-
+        brackets = new Image[4];
+        for (int i = 0; i < brackets.Length; i++)
+        {
+            bool right = (i & 1) != 0;
+            bool top = i < 2;
+            brackets[i] = CreateImage("Bracket" + i, announcementRect, NeonTheme.T.Reverse);
+            RectTransform bracket = brackets[i].rectTransform;
+            bracket.anchorMin = bracket.anchorMax = new Vector2(right ? 1f : 0f, top ? 1f : 0f);
+            bracket.pivot = new Vector2(right ? 1f : 0f, top ? 1f : 0f);
+            bracket.sizeDelta = new Vector2(3f, 32f);
+            bracket.anchoredPosition = Vector2.zero;
+        }
         visualRoot.gameObject.SetActive(false);
+    }
+
+    public void RestoreReverseActive()
+    {
+        // The persistent, upright rule indicator belongs to the HUD. Restoring
+        // a saved Reverse state must not replay its pause or add a second badge.
+        ResetImmediate();
     }
 
     public void PlayReverseEntrance(GameSquare smallestTarget, Action onComplete)
     {
-        if (visualRoot == null)
-        {
-            onComplete?.Invoke();
-            return;
-        }
-
-        StopPresentationCoroutines();
-        visualRoot.gameObject.SetActive(true);
-        visualRoot.SetAsLastSibling();
-        transitionCoroutine = StartCoroutine(ReverseEntranceRoutine(smallestTarget, onComplete));
+        BeginTransition(true, onComplete);
     }
 
     public void PlayReverseExit(Action onComplete)
     {
+        BeginTransition(false, onComplete);
+    }
+
+    // Existing callers remain valid. Cell-local feedback is dispatched by the
+    // validated tap path, so these hooks never identify or animate an answer.
+    public void PlayReverseCorrect(GameSquare newLargeTarget) { }
+    public void PlayReverseMistake() { }
+
+    public void ResetImmediate()
+    {
+        StopPresentation();
+        if (visualRoot != null) visualRoot.gameObject.SetActive(false);
+    }
+
+    private void BeginTransition(bool reverse, Action onComplete)
+    {
         if (visualRoot == null)
         {
             onComplete?.Invoke();
             return;
         }
-
-        StopPresentationCoroutines();
+        StopPresentation();
         visualRoot.gameObject.SetActive(true);
-        transitionCoroutine = StartCoroutine(ReverseExitRoutine(onComplete));
-    }
-
-    public void PlayReverseCorrect(GameSquare newLargeTarget)
-    {
-        if (visualRoot == null || !badgeRect.gameObject.activeInHierarchy) return;
-
-        if (badgeReactionCoroutine != null) StopCoroutine(badgeReactionCoroutine);
-        badgeReactionCoroutine = StartCoroutine(BadgePopRoutine());
-        if (newLargeTarget != null) newLargeTarget.PlayAttentionPulse(0.16f);
-    }
-
-    public void PlayReverseMistake()
-    {
-        if (visualRoot == null || !badgeRect.gameObject.activeInHierarchy) return;
-
-        if (badgeMistakeCoroutine != null) StopCoroutine(badgeMistakeCoroutine);
-        badgeMistakeCoroutine = StartCoroutine(BadgeMistakeRoutine());
-    }
-
-    public void ResetImmediate()
-    {
-        StopAllCoroutines();
-        transitionCoroutine = null;
-        shakeCoroutine = null;
-        badgePulseCoroutine = null;
-        badgeReactionCoroutine = null;
-        badgeMistakeCoroutine = null;
-
-        if (screenRoot != null)
-        {
-            screenRoot.anchoredPosition = screenBasePosition;
-            screenRoot.localRotation = screenBaseRotation;
-        }
-
-        if (badgeRect != null)
-        {
-            badgeRect.anchoredPosition = badgeBasePosition;
-            badgeRect.localScale = Vector3.one;
-        }
-
-        if (visualRoot != null) visualRoot.gameObject.SetActive(false);
-    }
-
-    private IEnumerator ReverseEntranceRoutine(GameSquare smallestTarget, Action onComplete)
-    {
-        screenBasePosition = screenRoot.anchoredPosition;
-        screenBaseRotation = screenRoot.localRotation;
-
-        dimOverlay.gameObject.SetActive(true);
+        visualRoot.SetAsLastSibling();
+        Color accent = reverse ? NeonTheme.T.Reverse : NeonTheme.T.Primary;
+        eyebrowText.text = reverse ? "RULE SHIFT" : "RULE RESTORED";
+        announcementText.text = reverse ? "REVERSE" : "STANDARD";
+        announcementText.color = accent;
+        instructionText.text = reverse ? "Smallest outline" : "Largest outline";
+        topRule.color = bottomRule.color = accent;
+        for (int i = 0; i < brackets.Length; i++) brackets[i].color = accent;
+        announcementRect.gameObject.SetActive(true);
+        announcementGroup.alpha = 0f;
         dimOverlay.color = Color.clear;
-        announcementRect.gameObject.SetActive(true);
-        badgeRect.gameObject.SetActive(false);
-        announcementText.text = "REVERSE!";
-        instructionText.text = string.Empty;
-        announcementGroup.alpha = 0f;
-        announcementRect.anchoredPosition = Vector2.zero;
-        announcementRect.localScale = Vector3.one * 0.4f;
-        announcementRect.localRotation = Quaternion.Euler(0f, 0f, -6f);
-
-        const float anticipationDuration = 0.08f;
-        float elapsed = 0f;
-        while (elapsed < anticipationDuration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / anticipationDuration);
-            dimOverlay.color = Color.Lerp(Color.clear, new Color(0.02f, 0f, 0.025f, 0.18f), t);
-            yield return null;
-        }
-
-        instructionText.text = "TAP THE SMALLEST";
-        shakeCoroutine = StartCoroutine(ScreenShakeRoutine(0.24f, 9f, 0.7f));
-        TriggerHaptic();
-
-        const float impactDuration = 0.28f;
-        elapsed = 0f;
-        while (elapsed < impactDuration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / impactDuration);
-            float eased = EaseOutBack(t);
-            announcementGroup.alpha = Mathf.Clamp01(t * 4f);
-            announcementRect.localScale = Vector3.one * Mathf.LerpUnclamped(0.4f, 1f, eased);
-            announcementRect.localRotation = Quaternion.Euler(0f, 0f, Mathf.LerpUnclamped(-6f, 0f, eased));
-            dimOverlay.color = Color.Lerp(new Color(0.02f, 0f, 0.025f, 0.18f), ReversePinkSoft, Mathf.Sin(t * Mathf.PI));
-            yield return null;
-        }
-
-        announcementRect.localScale = Vector3.one;
-        announcementRect.localRotation = Quaternion.identity;
-        if (smallestTarget != null) smallestTarget.PlayAttentionPulse();
-
-        yield return WaitPresentationTime(0.22f);
-
-        Canvas.ForceUpdateCanvases();
-        badgeRect.gameObject.SetActive(true);
-        badgeGroup.alpha = 0f;
-        badgeRect.localScale = Vector3.one * 0.82f;
-        Vector3 startPosition = announcementRect.localPosition;
-        Vector3 badgePosition = badgeRect.localPosition;
-
-        const float settleDuration = 0.18f;
-        elapsed = 0f;
-        while (elapsed < settleDuration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / settleDuration);
-            float smooth = t * t * (3f - 2f * t);
-            announcementRect.localPosition = Vector3.Lerp(startPosition, badgePosition, smooth);
-            announcementRect.localScale = Vector3.one * Mathf.Lerp(1f, 0.55f, smooth);
-            announcementGroup.alpha = 1f - smooth;
-            badgeGroup.alpha = smooth;
-            badgeRect.localScale = Vector3.one * Mathf.Lerp(0.82f, 1f, smooth);
-            dimOverlay.color = Color.Lerp(new Color(0.02f, 0f, 0.025f, 0.18f), Color.clear, smooth);
-            yield return null;
-        }
-
-        announcementRect.gameObject.SetActive(false);
-        dimOverlay.gameObject.SetActive(false);
-        badgeGroup.alpha = 1f;
-        badgeRect.localScale = Vector3.one;
-        badgePulseCoroutine = StartCoroutine(BadgePulseRoutine());
-        transitionCoroutine = null;
-        onComplete?.Invoke();
+        transitionCoroutine = StartCoroutine(TransitionRoutine(reverse, transitionVersion, onComplete));
     }
 
-    private IEnumerator ReverseExitRoutine(Action onComplete)
+    private IEnumerator TransitionRoutine(bool reverse, int version, Action onComplete)
     {
-        if (badgePulseCoroutine != null) StopCoroutine(badgePulseCoroutine);
-        badgePulseCoroutine = null;
-        badgeGroup.alpha = 1f;
-        badgeRect.gameObject.SetActive(true);
-
+        // Use one continuous timeline so phase boundaries cannot accumulate
+        // extra frame delays. Reduced effects preserves the exact same window.
+        float duration = reverse ? ReverseEntranceDuration : ReverseExitDuration;
+        float inDuration = reverse ? 0.14f : 0.12f;
+        float outDuration = reverse ? 0.18f : 0.16f;
         float elapsed = 0f;
-        const float collapseDuration = 0.18f;
-        while (elapsed < collapseDuration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / collapseDuration);
-            float x = t < 0.35f ? Mathf.Lerp(1f, 1.14f, t / 0.35f) : Mathf.Lerp(1.14f, 0f, (t - 0.35f) / 0.65f);
-            badgeRect.localScale = new Vector3(x, Mathf.Lerp(1f, 0.86f, t), 1f);
-            badgeGroup.alpha = 1f - Mathf.Clamp01((t - 0.65f) / 0.35f);
-            yield return null;
-        }
-        badgeRect.gameObject.SetActive(false);
-
-        announcementRect.gameObject.SetActive(true);
-        announcementRect.anchoredPosition = Vector2.zero;
-        announcementRect.localRotation = Quaternion.identity;
-        announcementRect.localScale = Vector3.one * 0.78f;
-        announcementText.text = "NORMAL";
-        announcementText.color = Color.white;
-        instructionText.text = string.Empty;
-        announcementGroup.alpha = 0f;
-
-        elapsed = 0f;
-        const float normalInDuration = 0.12f;
-        while (elapsed < normalInDuration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / normalInDuration);
-            announcementGroup.alpha = t;
-            announcementRect.localScale = Vector3.one * Mathf.Lerp(0.78f, 1f, EaseOutBack(t));
-            yield return null;
-        }
-
-        yield return WaitPresentationTime(0.13f);
-
-        elapsed = 0f;
-        const float normalOutDuration = 0.16f;
-        while (elapsed < normalOutDuration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / normalOutDuration);
-            announcementGroup.alpha = 1f - t;
-            announcementRect.localScale = Vector3.one * Mathf.Lerp(1f, 0.92f, t);
-            yield return null;
-        }
-
-        announcementText.color = ReversePink;
-        announcementRect.gameObject.SetActive(false);
-        visualRoot.gameObject.SetActive(false);
-        transitionCoroutine = null;
-        onComplete?.Invoke();
-    }
-
-    private IEnumerator ScreenShakeRoutine(float duration, float maxOffset, float maxAngle)
-    {
-        float elapsed = 0f;
+        bool hapticTriggered = false;
         while (elapsed < duration)
         {
             elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / duration);
-            float strength = (1f - t) * (1f - t);
-            Vector2 offset = UnityEngine.Random.insideUnitCircle * maxOffset * strength;
-            screenRoot.anchoredPosition = screenBasePosition + offset;
-            float angle = Mathf.Sin(t * Mathf.PI * 8f) * maxAngle * strength;
-            screenRoot.localRotation = screenBaseRotation * Quaternion.Euler(0f, 0f, angle);
-            yield return null;
-        }
-
-        screenRoot.anchoredPosition = screenBasePosition;
-        screenRoot.localRotation = screenBaseRotation;
-        shakeCoroutine = null;
-    }
-
-    private IEnumerator BadgePulseRoutine()
-    {
-        while (true)
-        {
-            float elapsed = 0f;
-            const float duration = 1.25f;
-            while (elapsed < duration)
+            float enter = Mathf.Clamp01(elapsed / inDuration);
+            float leave = Mathf.Clamp01((elapsed - (duration - outDuration)) / outDuration);
+            float alpha = Smooth(enter) * (1f - Smooth(leave));
+            announcementGroup.alpha = alpha;
+            Color dim = NeonTheme.T.Background;
+            dim.a = alpha * (NeonTheme.ReducedEffects ? 0.46f : 0.62f);
+            dimOverlay.color = dim;
+            announcementRect.anchoredPosition = NeonTheme.ReducedEffects
+                ? Vector2.zero
+                : new Vector2(0f, Mathf.Lerp(16f, 0f, Smooth(enter)) - leave * 8f);
+            if (reverse && !hapticTriggered && elapsed >= 0.08f)
             {
-                elapsed += PresentationDelta;
-                float pulse = (Mathf.Sin((elapsed / duration) * Mathf.PI * 2f - Mathf.PI * 0.5f) + 1f) * 0.5f;
-                badgeGroup.alpha = Mathf.Lerp(0.78f, 1f, pulse);
-                yield return null;
+                hapticTriggered = true;
+                TriggerHaptic();
             }
-        }
-    }
-
-    private IEnumerator BadgePopRoutine()
-    {
-        float elapsed = 0f;
-        const float duration = 0.2f;
-        while (elapsed < duration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / duration);
-            float scale = t < 0.4f ? Mathf.Lerp(1f, 1.12f, t / 0.4f) : Mathf.Lerp(1.12f, 1f, (t - 0.4f) / 0.6f);
-            badgeRect.localScale = Vector3.one * scale;
             yield return null;
         }
-        badgeRect.localScale = Vector3.one;
-        badgeReactionCoroutine = null;
-    }
 
-    private IEnumerator BadgeMistakeRoutine()
-    {
-        float elapsed = 0f;
-        const float duration = 0.22f;
-        while (elapsed < duration)
-        {
-            elapsed += PresentationDelta;
-            float t = Mathf.Clamp01(elapsed / duration);
-            float offset = Mathf.Sin(t * Mathf.PI * 6f) * 18f * (1f - t);
-            badgeRect.anchoredPosition = badgeBasePosition + Vector2.right * offset;
-            yield return null;
-        }
-        badgeRect.anchoredPosition = badgeBasePosition;
-        badgeMistakeCoroutine = null;
-    }
-
-    private void StopPresentationCoroutines()
-    {
-        if (transitionCoroutine != null) StopCoroutine(transitionCoroutine);
-        if (shakeCoroutine != null) StopCoroutine(shakeCoroutine);
-        if (badgePulseCoroutine != null) StopCoroutine(badgePulseCoroutine);
-        if (badgeReactionCoroutine != null) StopCoroutine(badgeReactionCoroutine);
-        if (badgeMistakeCoroutine != null) StopCoroutine(badgeMistakeCoroutine);
-
+        if (version != transitionVersion) yield break;
         transitionCoroutine = null;
-        shakeCoroutine = null;
-        badgePulseCoroutine = null;
-        badgeReactionCoroutine = null;
-        badgeMistakeCoroutine = null;
-        screenRoot.anchoredPosition = screenBasePosition;
-        screenRoot.localRotation = screenBaseRotation;
-        badgeRect.anchoredPosition = badgeBasePosition;
-        badgeRect.localScale = Vector3.one;
+        announcementGroup.alpha = 0f;
+        announcementRect.anchoredPosition = Vector2.zero;
+        visualRoot.gameObject.SetActive(false);
+        onComplete?.Invoke();
     }
 
-    private IEnumerator WaitPresentationTime(float duration)
+    private void StopPresentation()
     {
-        float elapsed = 0f;
-        while (elapsed < duration)
-        {
-            elapsed += PresentationDelta;
-            yield return null;
-        }
+        transitionVersion++;
+        if (transitionCoroutine != null) StopCoroutine(transitionCoroutine);
+        transitionCoroutine = null;
+        if (announcementRect != null) announcementRect.anchoredPosition = Vector2.zero;
+        if (announcementGroup != null) announcementGroup.alpha = 0f;
+        if (dimOverlay != null) dimOverlay.color = Color.clear;
     }
 
-    private static float EaseOutBack(float t)
+    private void OnDisable()
     {
-        const float c1 = 1.70158f;
-        const float c3 = c1 + 1f;
-        float x = t - 1f;
-        return 1f + c3 * x * x * x + c1 * x * x;
+        ResetImmediate();
     }
 
-    private static RectTransform CreateRect(string objectName, Transform parent)
+    private static float Smooth(float t) => t * t * (3f - 2f * t);
+
+    private static RectTransform CreateRect(string name, Transform parent)
     {
-        GameObject child = new GameObject(objectName, typeof(RectTransform));
+        GameObject child = new GameObject(name, typeof(RectTransform));
         child.transform.SetParent(parent, false);
         return child.GetComponent<RectTransform>();
     }
 
-    private static Image CreateImage(string objectName, Transform parent, Color color)
+    private static Image CreateImage(string name, Transform parent, Color color)
     {
-        GameObject child = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        child.transform.SetParent(parent, false);
-        Image image = child.GetComponent<Image>();
-        image.color = color;
-        image.raycastTarget = false;
-        return image;
+        RectTransform rect = CreateRect(name, parent);
+        Image result = rect.gameObject.AddComponent<Image>();
+        result.color = color;
+        result.raycastTarget = false;
+        return result;
     }
 
-    private static TMP_Text CreateText(string objectName, Transform parent, float fontSize, Color color)
+    private static TMP_Text CreateText(string name, Transform parent, float size, Color color)
     {
-        GameObject child = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-        child.transform.SetParent(parent, false);
-        TMP_Text text = child.GetComponent<TMP_Text>();
-        text.text = string.Empty;
-        text.fontSize = fontSize;
-        text.color = color;
-        text.alignment = TextAlignmentOptions.Center;
-        text.raycastTarget = false;
-        text.textWrappingMode = TextWrappingModes.NoWrap;
-        text.overflowMode = TextOverflowModes.Overflow;
-        return text;
+        RectTransform rect = CreateRect(name, parent);
+        TMP_Text result = rect.gameObject.AddComponent<TextMeshProUGUI>();
+        if (NeonTheme.T.font != null) result.font = NeonTheme.T.font;
+        result.text = string.Empty;
+        result.fontSize = size;
+        result.color = color;
+        result.alignment = TextAlignmentOptions.Center;
+        result.raycastTarget = false;
+        result.textWrappingMode = TextWrappingModes.NoWrap;
+        result.overflowMode = TextOverflowModes.Overflow;
+        return result;
+    }
+
+    private static void PlaceText(RectTransform rect, float inset, float y, float height)
+    {
+        rect.anchorMin = new Vector2(0f, 0.5f);
+        rect.anchorMax = new Vector2(1f, 0.5f);
+        rect.sizeDelta = new Vector2(-inset * 2f, height);
+        rect.anchoredPosition = new Vector2(0f, y);
+    }
+
+    private static void SetRule(RectTransform rect, float y)
+    {
+        rect.anchorMin = new Vector2(0f, y);
+        rect.anchorMax = new Vector2(1f, y);
+        rect.pivot = new Vector2(0.5f, y);
+        rect.sizeDelta = new Vector2(0f, 3f);
+        rect.anchoredPosition = Vector2.zero;
     }
 
     private static void StretchToParent(RectTransform rect)
@@ -463,16 +250,6 @@ public class GameplayFeedbackController : MonoBehaviour
         rect.anchorMax = Vector2.one;
         rect.offsetMin = Vector2.zero;
         rect.offsetMax = Vector2.zero;
-        rect.pivot = new Vector2(0.5f, 0.5f);
-    }
-
-    private static void SetCenteredRect(RectTransform rect, Vector2 size, Vector2 position)
-    {
-        rect.anchorMin = new Vector2(0.5f, 0.5f);
-        rect.anchorMax = new Vector2(0.5f, 0.5f);
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = size;
-        rect.anchoredPosition = position;
     }
 
     private static void TriggerHaptic()

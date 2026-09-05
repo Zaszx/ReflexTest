@@ -4,25 +4,31 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using static NeonStyle;
 
+/// <summary>Development-only practice navigation. GameManager owns sandbox isolation.</summary>
 public class DebugLevelSelectController : MonoBehaviour
 {
-    private static readonly Color DebugOrange = new Color(1f, 0.52f, 0.08f, 1f);
     private GameObject overlay;
     private Action<int> onLevelSelected;
+    private ScrollRect levelScroll;
+    private NeonTheme T => NeonTheme.T;
 
     public void Initialize(RectTransform mainMenuRoot, IReadOnlyList<LevelData> levels, Action<int> levelSelected)
     {
         if (overlay != null || mainMenuRoot == null) return;
-
         onLevelSelected = levelSelected;
-        CreateOpenButton(mainMenuRoot);
-        CreateLevelOverlay(mainMenuRoot, levels);
+        // Accept either the authored panel or its responsive content root.
+        RectTransform safe = mainMenuRoot.Find("SafeContent") as RectTransform;
+        if (safe == null) safe = mainMenuRoot;
+        CreateOpenButton(safe);
+        CreateLevelOverlay(safe, levels);
         overlay.SetActive(false);
     }
 
     public void Close()
     {
+        if (levelScroll != null) levelScroll.StopMovement();
         if (overlay != null) overlay.SetActive(false);
     }
 
@@ -35,104 +41,133 @@ public class DebugLevelSelectController : MonoBehaviour
 
     private void SelectLevel(int levelIndex)
     {
+        if (overlay == null || !overlay.activeInHierarchy) return;
         Close();
         onLevelSelected?.Invoke(levelIndex);
     }
 
     private void CreateOpenButton(RectTransform parent)
     {
-        Button button = CreateButton("DebugLevelSelectButton", parent, "DEBUG: LEVEL SELECT", DebugOrange);
-        RectTransform rect = button.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 0.08f);
-        rect.anchorMax = new Vector2(0.5f, 0.08f);
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = new Vector2(560f, 78f);
-        rect.anchoredPosition = Vector2.zero;
+        Button button = Button("DebugLevelSelectButton", parent, "PRACTICE");
+        At((RectTransform)button.transform, 1f, 0f, -170f, 48f, 216f, 72f);
+        button.image.color = T.Background;
+        TMP_Text label = button.GetComponentInChildren<TMP_Text>();
+        label.fontSize = 20f;
+        label.color = T.Muted;
+        label.alignment = TextAlignmentOptions.MidlineRight;
+        Fill(label.rectTransform, 16f, 0f, 12f, 0f);
         button.onClick.AddListener(Open);
     }
 
     private void CreateLevelOverlay(RectTransform parent, IReadOnlyList<LevelData> levels)
     {
-        overlay = new GameObject("DebugLevelSelectOverlay", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        overlay.transform.SetParent(parent, false);
-        RectTransform overlayRect = overlay.GetComponent<RectTransform>();
-        StretchToParent(overlayRect);
-        Image backdrop = overlay.GetComponent<Image>();
-        backdrop.color = new Color(0.015f, 0.012f, 0.025f, 0.97f);
-        backdrop.raycastTarget = true;
+        Image backdrop = Panel("DebugLevelSelectOverlay", parent, T.Background, true);
+        overlay = backdrop.gameObject;
+        RectTransform root = backdrop.rectTransform;
+        Fill(root);
+        int count = levels?.Count ?? 0;
 
-        TMP_Text title = CreateText("Title", overlayRect, "LEVEL SELECT", 76f, Color.white);
-        SetRect(title.rectTransform, new Vector2(850f, 100f), new Vector2(0f, 650f));
+        TMP_Text eyebrow = Text("Eyebrow", root, "DEBUG SANDBOX", T.labelSize, T.Muted);
+        Place(eyebrow.rectTransform, T.pageMargin, -52f, 600f, 48f);
+        eyebrow.characterSpacing = 3f;
+        TMP_Text total = Text("LevelCount", root, count + " LEVELS", 24f, T.Muted, TextAlignmentOptions.MidlineRight);
+        At(total.rectTransform, 1f, 1f, -T.pageMargin - 140f, -76f, 280f, 48f);
+
+        TMP_Text title = Text("Title", root, "PRACTICE", T.headingSize, T.Text);
         title.fontStyle = FontStyles.Bold;
+        Place(title.rectTransform, T.pageMargin, -124f, 952f, 138f);
+        TMP_Text description = Text("Subtitle", root,
+            "Choose a campaign level.\nPractice earns no coins and saves no progression.", 28f, T.Muted);
+        description.textWrappingMode = TextWrappingModes.Normal;
+        Place(description.rectTransform, T.pageMargin, -258f, 952f, 96f);
 
-        TMP_Text subtitle = CreateText("Subtitle", overlayRect, "EDITOR / DEVELOPMENT BUILD", 28f, DebugOrange);
-        SetRect(subtitle.rectTransform, new Vector2(800f, 55f), new Vector2(0f, 575f));
-        subtitle.characterSpacing = 3f;
+        Image line = Rule("Divider", root);
+        line.rectTransform.anchorMin = new Vector2(0f, 1f);
+        line.rectTransform.anchorMax = new Vector2(1f, 1f);
+        line.rectTransform.offsetMin = new Vector2(T.pageMargin, -374f);
+        line.rectTransform.offsetMax = new Vector2(-T.pageMargin, -372f);
 
-        Button closeButton = CreateButton("CloseButton", overlayRect, "CLOSE", new Color(0.18f, 0.16f, 0.24f, 1f));
-        RectTransform closeRect = closeButton.GetComponent<RectTransform>();
-        closeRect.anchorMin = new Vector2(0.5f, 0.5f);
-        closeRect.anchorMax = new Vector2(0.5f, 0.5f);
-        closeRect.pivot = new Vector2(0.5f, 0.5f);
-        closeRect.sizeDelta = new Vector2(420f, 90f);
-        closeRect.anchoredPosition = new Vector2(0f, -700f);
-        closeButton.onClick.AddListener(Close);
+        Image viewportImage = Panel("LevelViewport", root, Color.clear, true);
+        RectTransform viewport = viewportImage.rectTransform;
+        Fill(viewport, T.pageMargin, 216f, T.pageMargin, 402f);
+        viewport.gameObject.AddComponent<RectMask2D>();
+        levelScroll = viewport.gameObject.AddComponent<ScrollRect>();
+        RectTransform content = Rect("LevelGrid", viewport);
+        int rows = Mathf.CeilToInt(count / 2f);
+        const float rowPitch = 184f;
+        const float rowGap = 20f;
+        content.anchorMin = new Vector2(0f, 1f);
+        content.anchorMax = new Vector2(1f, 1f);
+        content.pivot = new Vector2(0.5f, 1f);
+        content.sizeDelta = new Vector2(0f, Mathf.Max(172f, rows * rowPitch - rowGap));
+        content.anchoredPosition = Vector2.zero;
+        levelScroll.viewport = viewport;
+        levelScroll.content = content;
+        levelScroll.horizontal = false;
+        levelScroll.vertical = true;
+        levelScroll.movementType = ScrollRect.MovementType.Clamped;
+        levelScroll.scrollSensitivity = 52f;
+        levelScroll.decelerationRate = 0.08f;
 
-        GameObject viewportObject = new GameObject("LevelViewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(RectMask2D), typeof(ScrollRect));
-        viewportObject.transform.SetParent(overlayRect, false);
-        RectTransform viewportRect = viewportObject.GetComponent<RectTransform>();
-        SetRect(viewportRect, new Vector2(820f, 1050f), new Vector2(0f, -20f));
-        Image viewportImage = viewportObject.GetComponent<Image>();
-        viewportImage.color = new Color(0f, 0f, 0f, 0.01f);
-        viewportImage.raycastTarget = true;
-
-        RectTransform gridRect = CreateRect("LevelGrid", viewportRect);
-        int levelCount = levels?.Count ?? 0;
-        int rowCount = Mathf.Max(1, Mathf.CeilToInt(levelCount / 2f));
-        gridRect.anchorMin = new Vector2(0.5f, 1f);
-        gridRect.anchorMax = new Vector2(0.5f, 1f);
-        gridRect.pivot = new Vector2(0.5f, 1f);
-        gridRect.sizeDelta = new Vector2(800f, rowCount * 148f);
-        gridRect.anchoredPosition = Vector2.zero;
-        GridLayoutGroup grid = gridRect.gameObject.AddComponent<GridLayoutGroup>();
-        grid.cellSize = new Vector2(375f, 120f);
-        grid.spacing = new Vector2(28f, 28f);
-        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-        grid.constraintCount = 2;
-        grid.childAlignment = TextAnchor.UpperCenter;
-
-        ScrollRect scroll = viewportObject.GetComponent<ScrollRect>();
-        scroll.viewport = viewportRect;
-        scroll.content = gridRect;
-        scroll.horizontal = false;
-        scroll.vertical = true;
-        scroll.movementType = ScrollRect.MovementType.Clamped;
-        scroll.scrollSensitivity = 45f;
-
-        if (levels == null || levels.Count == 0)
+        if (count == 0)
         {
-            TMP_Text empty = CreateText("NoLevels", gridRect, "NO LEVELS CONFIGURED", 34f, Color.gray);
-            empty.rectTransform.sizeDelta = new Vector2(760f, 100f);
-            return;
+            TMP_Text empty = Text("NoLevels", content, "No campaign levels configured.", 32f, T.Muted);
+            Fill(empty.rectTransform, 24f, 0f, 24f, 0f);
+        }
+        else
+        {
+            for (int i = 0; i < count; i++) CreateLevelButton(content, levels[i], i, rowPitch, rowGap);
         }
 
-        for (int i = 0; i < levels.Count; i++)
-        {
-            int capturedIndex = i;
-            LevelData level = levels[i];
-            string modifiers = level == null ? string.Empty : GetModifierLabel(level);
-            string label = level == null
-                ? $"MISSING LEVEL\nINDEX {i}"
-                : $"LEVEL {level.levelNumber}\n<size=22>{level.gridSize}x{level.gridSize} • {level.timeLimit:0}s • {modifiers}</size>";
+        Button close = Button("CloseButton", root, "BACK TO MENU");
+        RectTransform closeRect = (RectTransform)close.transform;
+        closeRect.anchorMin = new Vector2(0f, 0f);
+        closeRect.anchorMax = new Vector2(1f, 0f);
+        closeRect.pivot = new Vector2(0.5f, 0f);
+        closeRect.offsetMin = new Vector2(T.pageMargin, 64f);
+        closeRect.offsetMax = new Vector2(-T.pageMargin, 176f);
+        close.onClick.AddListener(Close);
+        TMP_Text buildLabel = Text("BuildLabel", root, "EDITOR / DEVELOPMENT BUILD", 20f, T.Muted);
+        Place(buildLabel.rectTransform, T.pageMargin, 34f, 952f, 32f, 0f);
+    }
 
-            Button levelButton = CreateButton($"Level_{i + 1}", gridRect, label, new Color(0.07f, 0.075f, 0.13f, 1f));
-            levelButton.interactable = level != null;
-            levelButton.onClick.AddListener(() => SelectLevel(capturedIndex));
+    private void CreateLevelButton(RectTransform parent, LevelData level, int index, float rowPitch, float rowGap)
+    {
+        bool valid = level != null;
+        Button button = Button("Level_" + (index + 1), parent, valid ? $"LEVEL {level.levelNumber:00}" : "MISSING LEVEL");
+        button.image.color = T.Surface;
+        button.interactable = valid;
+        RectTransform rect = (RectTransform)button.transform;
+        int column = index % 2;
+        int row = index / 2;
+        // Anchored columns remain responsive without rebuilding a layout every frame.
+        rect.anchorMin = new Vector2(column * 0.5f, 1f);
+        rect.anchorMax = new Vector2((column + 1) * 0.5f, 1f);
+        rect.offsetMin = new Vector2(column == 0 ? 0f : 10f, -(row + 1) * rowPitch + rowGap);
+        rect.offsetMax = new Vector2(column == 0 ? -10f : 0f, -row * rowPitch);
 
-            Outline outline = levelButton.gameObject.AddComponent<Outline>();
-            outline.effectColor = level != null ? level.outlineColor : Color.gray;
-            outline.effectDistance = new Vector2(3f, -3f);
-        }
+        TMP_Text label = button.GetComponentInChildren<TMP_Text>();
+        label.fontSize = 36f;
+        label.color = valid ? T.Text : T.Muted;
+        // Keep the label's centered rect used by shared press feedback, and
+        // position its content with text margins rather than a new transform.
+        Fill(label.rectTransform, 24f, 0f, 24f, 0f);
+        label.alignment = TextAlignmentOptions.TopLeft;
+        label.margin = new Vector4(0f, 14f, 0f, 86f);
+
+        string details = valid ? $"{level.gridSize} × {level.gridSize}   ·   {level.timeLimit:0.#}s   ·   {level.requiredCorrectClicks} targets" : "Campaign entry " + (index + 1);
+        TMP_Text metadata = Text("Details", rect, details, 22f, T.Muted);
+        metadata.rectTransform.anchorMin = new Vector2(0f, 1f);
+        metadata.rectTransform.anchorMax = new Vector2(1f, 1f);
+        metadata.rectTransform.offsetMin = new Vector2(24f, -114f);
+        metadata.rectTransform.offsetMax = new Vector2(-24f, -76f);
+        TMP_Text modifiers = Text("Modifiers", rect, valid ? GetModifierLabel(level) : "UNAVAILABLE", 20f, valid ? T.Target : T.Muted);
+        modifiers.characterSpacing = 1f;
+        modifiers.rectTransform.anchorMin = new Vector2(0f, 1f);
+        modifiers.rectTransform.anchorMax = new Vector2(1f, 1f);
+        modifiers.rectTransform.offsetMin = new Vector2(24f, -150f);
+        modifiers.rectTransform.offsetMax = new Vector2(-24f, -116f);
+        button.onClick.AddListener(() => SelectLevel(index));
     }
 
     private static string GetModifierLabel(LevelData level)
@@ -142,72 +177,12 @@ public class DebugLevelSelectController : MonoBehaviour
         if (!Mathf.Approximately(level.rotateSpeed, 0f)) labels.Add("ROT");
         if (level.scaleEnabled) labels.Add("SCALE");
         if (level.movementEnabled) labels.Add("MOVE");
-        return labels.Count == 0 ? "BASE" : string.Join("+", labels);
+        return labels.Count == 0 ? "STANDARD" : string.Join(" · ", labels);
     }
 
-    private static Button CreateButton(string objectName, Transform parent, string label, Color backgroundColor)
+    private static void Place(RectTransform rect, float left, float top, float width, float height, float anchorY = 1f)
     {
-        GameObject buttonObject = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
-        buttonObject.transform.SetParent(parent, false);
-        Image image = buttonObject.GetComponent<Image>();
-        image.color = backgroundColor;
-
-        Button button = buttonObject.GetComponent<Button>();
-        button.targetGraphic = image;
-
-        ColorBlock colors = button.colors;
-        colors.normalColor = Color.white;
-        colors.highlightedColor = new Color(1f, 1f, 1f, 1f);
-        colors.pressedColor = new Color(0.72f, 0.72f, 0.72f, 1f);
-        colors.selectedColor = Color.white;
-        colors.disabledColor = new Color(0.35f, 0.35f, 0.35f, 0.7f);
-        colors.colorMultiplier = 1f;
-        button.colors = colors;
-
-        TMP_Text text = CreateText("Text", buttonObject.transform, label, 36f, Color.white);
-        StretchToParent(text.rectTransform);
-        text.fontStyle = FontStyles.Bold;
-        text.textWrappingMode = TextWrappingModes.Normal;
-        return button;
-    }
-
-    private static TMP_Text CreateText(string objectName, Transform parent, string value, float fontSize, Color color)
-    {
-        GameObject textObject = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-        textObject.transform.SetParent(parent, false);
-        TMP_Text text = textObject.GetComponent<TMP_Text>();
-        text.text = value;
-        text.fontSize = fontSize;
-        text.color = color;
-        text.alignment = TextAlignmentOptions.Center;
-        text.raycastTarget = false;
-        text.overflowMode = TextOverflowModes.Overflow;
-        return text;
-    }
-
-    private static RectTransform CreateRect(string objectName, Transform parent)
-    {
-        GameObject child = new GameObject(objectName, typeof(RectTransform));
-        child.transform.SetParent(parent, false);
-        return child.GetComponent<RectTransform>();
-    }
-
-    private static void StretchToParent(RectTransform rect)
-    {
-        rect.anchorMin = Vector2.zero;
-        rect.anchorMax = Vector2.one;
-        rect.offsetMin = Vector2.zero;
-        rect.offsetMax = Vector2.zero;
-        rect.pivot = new Vector2(0.5f, 0.5f);
-    }
-
-    private static void SetRect(RectTransform rect, Vector2 size, Vector2 position)
-    {
-        rect.anchorMin = new Vector2(0.5f, 0.5f);
-        rect.anchorMax = new Vector2(0.5f, 0.5f);
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = size;
-        rect.anchoredPosition = position;
+        At(rect, 0f, anchorY, left + width * 0.5f, top - height * 0.5f, width, height);
     }
 }
 #endif

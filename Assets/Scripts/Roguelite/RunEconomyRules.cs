@@ -35,7 +35,8 @@ public static class RunEconomyRules
         summary = new RunSummaryData
         {
             reason = reason ?? string.Empty,
-            highestLevelEntered = Mathf.Clamp(run.currentLevelIndex + 1, 1, Mathf.Max(1, campaignLevelCount)),
+            // Between levels the index already points at the next, unentered level.
+            highestLevelEntered = Mathf.Clamp(run.currentLevelIndex + (run.betweenLevels ? 0 : 1), 1, Mathf.Max(1, campaignLevelCount)),
             levelsCompleted = Mathf.Max(0, run.levelsCompleted),
             runLevelRewards = levelRewards,
             completionBonus = bonus,
