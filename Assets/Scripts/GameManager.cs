@@ -1,26 +1,36 @@
-using UnityEngine;
-using UnityEngine.UI;
-using TMPro;
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
 
-public class GameManager : MonoBehaviour
+/// <summary>
+/// Scene-facing campaign controller. Persistent data and deterministic rules
+/// live in the small testable classes under Scripts/Roguelite.
+/// </summary>
+public sealed class GameManager : MonoBehaviour
 {
+    private enum FlowState
+    {
+        Boot,
+        MainMenu,
+        LevelIntro,
+        Playing,
+        ReverseEntrance,
+        ReverseExit,
+        LevelComplete,
+        RunSummary,
+        Shop,
+        Settings
+    }
+
     public static GameManager Instance { get; private set; }
 
-    public enum GameMode { Campaign, Timed, Speed }
-
-    [Header("Mode Configuration")]
-    public GameMode activeMode = GameMode.Campaign;
-    private int scoreCount; // Used for Timed Mode correct clicks
-
-    [Header("Global Configuration")]
+    [Header("Campaign Configuration")]
     public GameConfig gameConfig;
-
-    [Header("Level Configuration")]
-    public List<LevelData> levels;
-    public int currentLevelIndex = 0;
-    private LevelData activeLevel;
+    [Tooltip("Optional explicit campaign. The generated Resources campaign is used when this is empty.")]
+    public CampaignDefinition campaign;
 
     [Header("UI Panels")]
     public GameObject mainMenuPanel;
@@ -28,7 +38,11 @@ public class GameManager : MonoBehaviour
     public GameObject successPanel;
     public GameObject failPanel;
     public GameObject settingsPanel;
-    public List<Button> levelButtons;
+
+    [Header("Main Menu")]
+    public Button startContinueButton;
+    public Button upgradesButton;
+    public Button menuSettingsButton;
 
     [Header("Gameplay Elements")]
     public RectTransform gridContainer;
@@ -42,79 +56,148 @@ public class GameManager : MonoBehaviour
     public Button homeButton;
     public Button settingsButton;
 
-    [Header("Success/Fail Screens UI")]
+    [Header("Level Complete / Campaign Complete")]
     public TMP_Text successLevelText;
     public Button successNextButton;
     public Button successMenuButton;
-    
+
+    [Header("Run End Summary")]
     public TMP_Text failLevelText;
     public TMP_Text failReasonText;
-    public Button failRetryButton;
+    public Button failPrimaryButton;
     public Button failMenuButton;
 
-    [Header("Settings Panel UI")]
+    [Header("Settings")]
     public Button settingsCloseButton;
-    public Slider sfxVolumeSlider; // Optional extra for settings polish
-    public Toggle hapticToggle;    // Optional extra for settings polish
+    public Slider sfxVolumeSlider;
+    public Toggle hapticToggle;
 
     [Header("Asset References")]
     public Sprite solidSquareSprite;
     public Sprite outlineSquareSprite;
 
-    // Grid tracking
-    private List<GameSquare> instantiatedSquares = new List<GameSquare>();
-    private float levelTimer;
-    private int correctClicksRemaining;
-    private bool isGameActive;
-
-    // Reverse modifier tracking
-    private bool isReverseActive;
-    private int reverseCorrectClicksRemaining;
-    private float reverseCooldownRemaining;
-    private bool isGameplayTransitionLocked;
+    private readonly List<GameSquare> instantiatedSquares = new List<GameSquare>();
+    private SaveEnvelopeData saveData;
+    private NeonSaveService saveService;
+    private ActiveRunData sessionRun;
+    private LevelData activeLevel;
+    private DeterministicRandom random;
     private GameplayFeedbackController feedbackController;
+    private RogueliteUIController rogueliteUI;
+    private FlowState state = FlowState.Boot;
+    private FlowState stateBeforeSettings = FlowState.MainMenu;
+    private bool isDebugSession;
+    private bool terminalRequested;
+    private bool applicationSuspended;
+    private bool applicationPauseSignal;
+    private bool applicationFocusLost;
+    private bool saveDirty;
+    private float checkpointElapsed;
+    private int presentationToken;
+
+    private RectTransform boundsRoot;
+    private RectTransform rotationScaleRoot;
+    private RectTransform gridContentRoot;
+    private float baseGridSide;
+    private float currentGridScale = 1f;
+
+    private Coroutine introCoroutine;
+    private Coroutine flashCoroutine;
+    private readonly Color flashGreen = new Color(0f, 1f, 0.4f, 0.8f);
+    private readonly Color flashRed = new Color(1f, 0.1f, 0.2f, 0.8f);
+    private readonly Color reservePink = new Color(1f, 0.08f, 0.48f, 1f);
+
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
     private DebugLevelSelectController debugLevelSelectController;
 #endif
 
-    // Active lit square tracking
-    private GameSquare smallLitSquare;
-    private GameSquare mediumLitSquare;
-    private GameSquare largeLitSquare;
+    private bool SimulationIsActive =>
+        state == FlowState.Playing && !applicationSuspended && sessionRun != null && activeLevel != null && !terminalRequested;
 
-    // Colors - made slightly transparent/glowing neon border
-    private Color flashGreen = new Color(0f, 1f, 0.4f, 0.8f);
-    private Color flashRed = new Color(1f, 0.1f, 0.2f, 0.8f);
-
-    private Coroutine flashCoroutine;
+    private bool HasRealRun => saveData != null && saveData.activeRun != null;
 
     private void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
+            return;
         }
-        else
-        {
-            Destroy(gameObject);
-        }
+
+        Destroy(gameObject);
     }
 
     private void Start()
     {
-        // Add listeners to static buttons
-        homeButton.onClick.AddListener(ReturnToMainMenu);
-        settingsButton.onClick.AddListener(OpenSettings);
-        settingsCloseButton.onClick.AddListener(CloseSettings);
-        
-        successMenuButton.onClick.AddListener(ReturnToMainMenu);
-        failRetryButton.onClick.AddListener(RestartLevel);
-        failMenuButton.onClick.AddListener(ReturnToMainMenu);
+        if (!InitializeConfiguration() || !ValidateRequiredSceneReferences())
+        {
+            enabled = false;
+            return;
+        }
 
-        // Bind main menu game modes dynamically
-        BindMenuButtons();
+        ConfigureStaticButtons();
+        ConfigureFeedback();
+        ConfigureRogueliteUI();
+        ConfigurePersistence();
 
-        // Ensure flash overlay is configured as a gorgeous neon edge frame instead of full-screen solid block
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        if (gameConfig.enableDebugLevelSelect)
+        {
+            debugLevelSelectController = GetComponent<DebugLevelSelectController>();
+            if (debugLevelSelectController == null)
+                debugLevelSelectController = gameObject.AddComponent<DebugLevelSelectController>();
+            debugLevelSelectController.Initialize(mainMenuPanel.GetComponent<RectTransform>(), campaign.levels, StartDebugLevel);
+        }
+#endif
+
+        ShowMainMenu();
+    }
+
+    private bool InitializeConfiguration()
+    {
+        if (gameConfig == null)
+        {
+            Debug.LogError("Neon Reflex requires a GameConfig reference.");
+            return false;
+        }
+
+        UpgradeCatalog.EnsureDefaults(gameConfig);
+        if (campaign == null)
+            campaign = Resources.Load<CampaignDefinition>("NeonReflexCampaign");
+
+        if (campaign == null || campaign.LevelCount == 0)
+        {
+            Debug.LogError("Neon Reflex campaign is missing or empty. Generate the fixed campaign from the Neon Reflex editor menu.");
+            return false;
+        }
+
+        CampaignValidationReport report = CampaignValidation.Validate(campaign, gameConfig.minimumTouchTargetPixels);
+        for (int i = 0; i < report.errors.Count; i++)
+            Debug.LogError("Campaign validation: " + report.errors[i]);
+        for (int i = 0; i < report.warnings.Count; i++)
+            Debug.LogWarning("Campaign validation: " + report.warnings[i]);
+        return report.IsValid;
+    }
+
+    private bool ValidateRequiredSceneReferences()
+    {
+        bool valid = mainMenuPanel != null && gameplayPanel != null && successPanel != null && failPanel != null &&
+                     settingsPanel != null && gridContainer != null && squarePrefab != null && levelText != null &&
+                     timerText != null && remainingText != null && startContinueButton != null && upgradesButton != null &&
+                     menuSettingsButton != null;
+        if (!valid)
+            Debug.LogError("GameManager has missing required scene references. Re-open SampleScene after its serialized migration.");
+        return valid;
+    }
+
+    private void ConfigureStaticButtons()
+    {
+        BindButton(homeButton, ReturnToMainMenu);
+        BindButton(settingsButton, OpenSettings);
+        BindButton(settingsCloseButton, CloseSettings);
+        BindButton(successMenuButton, ReturnToMainMenu);
+        BindButton(failMenuButton, ReturnToMainMenu);
+
         if (flashOverlay != null)
         {
             flashOverlay.gameObject.SetActive(true);
@@ -122,753 +205,1237 @@ public class GameManager : MonoBehaviour
             flashOverlay.color = Color.clear;
             flashOverlay.raycastTarget = false;
         }
+    }
 
+    private static void BindButton(Button button, UnityEngine.Events.UnityAction action)
+    {
+        if (button == null)
+            return;
+        button.onClick.RemoveAllListeners();
+        button.onClick.AddListener(action);
+    }
+
+    private void ConfigureFeedback()
+    {
         feedbackController = GetComponent<GameplayFeedbackController>();
         if (feedbackController == null)
-        {
             feedbackController = gameObject.AddComponent<GameplayFeedbackController>();
-        }
         feedbackController.Initialize(gameplayPanel.GetComponent<RectTransform>());
+    }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-        if (gameConfig != null && gameConfig.enableDebugLevelSelect)
+    private void ConfigureRogueliteUI()
+    {
+        rogueliteUI = GetComponent<RogueliteUIController>();
+        if (rogueliteUI == null)
+            rogueliteUI = gameObject.AddComponent<RogueliteUIController>();
+
+        rogueliteUI.Initialize(
+            mainMenuPanel.transform.parent as RectTransform,
+            mainMenuPanel.GetComponent<RectTransform>(),
+            gameplayPanel.GetComponent<RectTransform>(),
+            settingsPanel.GetComponent<RectTransform>(),
+            startContinueButton,
+            upgradesButton,
+            menuSettingsButton,
+            hapticToggle,
+            levelText,
+            timerText,
+            remainingText,
+            homeButton,
+            settingsButton,
+            gridContainer,
+            solidSquareSprite);
+        rogueliteUI.BindCallbacks(
+            StartOrContinueRun,
+            ConfirmAbandonRun,
+            OpenUpgradeShop,
+            OpenSettings,
+            OnShopClosed,
+            SetHapticsEnabled,
+            TryPurchaseUpgrade);
+        rogueliteUI.SetHaptics(PlayerPrefs.GetInt("HapticsEnabled", 1) == 1);
+    }
+
+    private void ConfigurePersistence()
+    {
+        saveService = new NeonSaveService();
+        saveData = saveService.Load(gameConfig) ?? SaveEnvelopeData.CreateDefault();
+        saveData.saveVersion = gameConfig.saveVersion;
+        if (saveData.profile == null)
+            saveData.profile = PlayerProfileData.CreateDefault();
+        saveData.profile.saveVersion = gameConfig.saveVersion;
+        saveService.MigrateLegacyPlayerPrefs(saveData, gameConfig);
+        ValidateSavedRunReference();
+    }
+
+    private void ValidateSavedRunReference()
+    {
+        ActiveRunData run = saveData.activeRun;
+        if (run == null)
+            return;
+
+        int stableIdIndex = FindLevelIndex(run.currentLevelId);
+        bool numericIndexValid = run.currentLevelIndex >= 0 && run.currentLevelIndex < campaign.LevelCount;
+        if (stableIdIndex >= 0)
         {
-            debugLevelSelectController = GetComponent<DebugLevelSelectController>();
-            if (debugLevelSelectController == null)
-            {
-                debugLevelSelectController = gameObject.AddComponent<DebugLevelSelectController>();
-            }
-            debugLevelSelectController.Initialize(mainMenuPanel.GetComponent<RectTransform>(), levels, StartLevel);
+            run.currentLevelIndex = stableIdIndex;
         }
-#endif
+        else if (numericIndexValid)
+        {
+            LevelData recovered = campaign.GetLevel(run.currentLevelIndex);
+            run.currentLevelId = recovered.stableId;
+            run.betweenLevels = true;
+            run.levelState = new ActiveLevelStateData();
+            Debug.LogWarning("Saved level ID no longer exists; kept run resources and will safely restart its clamped configured level.");
+        }
+        else
+        {
+            run.currentLevelIndex = Mathf.Clamp(run.currentLevelIndex, 0, campaign.LevelCount - 1);
+            run.currentLevelId = campaign.GetLevel(run.currentLevelIndex).stableId;
+            run.betweenLevels = true;
+            run.levelState = new ActiveLevelStateData();
+            Debug.LogWarning("Saved campaign position was invalid; kept run resources and clamped it to a configured level.");
+        }
 
-        ShowMainMenu();
+        run.currentHealth = Mathf.Clamp(run.currentHealth, 0, Mathf.Max(1, run.upgrades?.maxHealth ?? gameConfig.baseHealth));
+        SaveRealRunCritical();
+    }
+
+    private int FindLevelIndex(string stableId)
+    {
+        if (string.IsNullOrEmpty(stableId))
+            return -1;
+        for (int i = 0; i < campaign.LevelCount; i++)
+        {
+            LevelData candidate = campaign.GetLevel(i);
+            if (candidate != null && string.Equals(candidate.stableId, stableId, StringComparison.Ordinal))
+                return i;
+        }
+        return -1;
     }
 
     private void Update()
     {
-        if (!isGameActive) return;
-        if (isGameplayTransitionLocked) return;
+        if (!SimulationIsActive)
+            return;
 
-        RotatePlayArea();
+        float deltaTime = Mathf.Max(0f, Time.deltaTime);
+        float simulationDelta = CalculateAvailableGameplayDelta(deltaTime);
+        GameplayTimerTransition timerTransition = GameplayTimerRules.Tick(sessionRun, deltaTime);
 
-        if (!isReverseActive && reverseCooldownRemaining > 0f)
+        AdvanceReverseCooldown(simulationDelta);
+        AdvanceGridMotion(simulationDelta);
+        UpdateGameplayUI();
+        saveDirty = true;
+        checkpointElapsed += simulationDelta;
+
+        if (timerTransition == GameplayTimerTransition.EnteredReserve)
         {
-            reverseCooldownRemaining = Mathf.Max(0f, reverseCooldownRemaining - Time.deltaTime);
+            TriggerScreenFlash(false);
+            TriggerHaptic();
+            SaveRealRunCritical();
         }
-
-        if (activeMode == GameMode.Campaign)
+        else if (timerTransition == GameplayTimerTransition.ReserveDepleted)
         {
-            levelTimer -= Time.deltaTime;
-            if (levelTimer <= 0f)
-            {
-                levelTimer = 0f;
-                UpdateTimerUI();
-                LevelFailed("TIME'S UP!");
-            }
-            else
-            {
-                UpdateTimerUI();
-            }
-        }
-        else if (activeMode == GameMode.Timed)
-        {
-            levelTimer -= Time.deltaTime;
-            if (levelTimer <= 0f)
-            {
-                levelTimer = 0f;
-                UpdateTimerUI();
-                TimedModeCompleted();
-            }
-            else
-            {
-                UpdateTimerUI();
-            }
-        }
-        else if (activeMode == GameMode.Speed)
-        {
-            levelTimer += Time.deltaTime;
-            UpdateTimerUI();
-        }
-    }
-
-    private void BindMenuButtons()
-    {
-        // Campaign Mode Button
-        Transform btn1 = mainMenuPanel.transform.Find("PlayLevel1Button");
-        if (btn1 != null)
-        {
-            Button btn = btn1.GetComponent<Button>();
-            if (btn != null)
-            {
-                btn.onClick.RemoveAllListeners();
-                btn.onClick.AddListener(StartCampaignMode);
-            }
-        }
-
-        // Timed Mode Button
-        Transform btn2 = mainMenuPanel.transform.Find("PlayLevel2Button");
-        if (btn2 != null)
-        {
-            Button btn = btn2.GetComponent<Button>();
-            if (btn != null)
-            {
-                btn.onClick.RemoveAllListeners();
-                btn.onClick.AddListener(StartTimedMode);
-            }
-        }
-
-        // Speed Mode Button
-        Transform btn3 = mainMenuPanel.transform.Find("PlayLevel3Button");
-        if (btn3 != null)
-        {
-            Button btn = btn3.GetComponent<Button>();
-            if (btn != null)
-            {
-                btn.onClick.RemoveAllListeners();
-                btn.onClick.AddListener(StartSpeedMode);
-            }
-        }
-    }
-
-    public void ShowMainMenu()
-    {
-        isGameActive = false;
-        isGameplayTransitionLocked = false;
-        if (feedbackController != null) feedbackController.ResetImmediate();
-        mainMenuPanel.SetActive(true);
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-        if (debugLevelSelectController != null) debugLevelSelectController.Close();
-#endif
-        gameplayPanel.SetActive(false);
-        successPanel.SetActive(false);
-        failPanel.SetActive(false);
-        settingsPanel.SetActive(false);
-
-        // Update button texts dynamically based on player persistent data
-        int savedCampaignLevel = GetSavedCampaignLevelIndex();
-        int timedHighScore = PlayerPrefs.GetInt("TimedHighScore", 0);
-        float speedBestTime = PlayerPrefs.GetFloat("SpeedBestTime", 9999f);
-
-        // Update Campaign Button Text
-        Transform btn1 = mainMenuPanel.transform.Find("PlayLevel1Button/Text");
-        if (btn1 != null)
-        {
-            TMP_Text txt = btn1.GetComponent<TMP_Text>();
-            if (txt != null)
-            {
-                txt.text = levels != null && levels.Count > 0 && levels[savedCampaignLevel] != null
-                    ? $"CONTINUE LEVEL {levels[savedCampaignLevel].levelNumber}"
-                    : "CAMPAIGN";
-            }
-        }
-
-        // Update Timed Button Text
-        Transform btn2 = mainMenuPanel.transform.Find("PlayLevel2Button/Text");
-        if (btn2 != null)
-        {
-            TMP_Text txt = btn2.GetComponent<TMP_Text>();
-            if (txt != null) txt.text = $"TIMED MODE (BEST: {timedHighScore})";
-        }
-
-        // Update Speed Button Text
-        Transform btn3 = mainMenuPanel.transform.Find("PlayLevel3Button/Text");
-        if (btn3 != null)
-        {
-            TMP_Text txt = btn3.GetComponent<TMP_Text>();
-            if (txt != null) txt.text = $"SPEED MODE (BEST: {(speedBestTime < 9998f ? speedBestTime.ToString("F2") + "s" : "--")})";
-        }
-    }
-
-    public void StartCampaignMode()
-    {
-        activeMode = GameMode.Campaign;
-        currentLevelIndex = GetSavedCampaignLevelIndex();
-
-        StartActiveSetup();
-    }
-
-    public void StartTimedMode()
-    {
-        activeMode = GameMode.Timed;
-        scoreCount = 0;
-        
-        // Use active campaign level configuration for colors/style consistency, or fallback to Level 1
-        currentLevelIndex = GetSavedCampaignLevelIndex();
-
-        StartActiveSetup();
-    }
-
-    public void StartSpeedMode()
-    {
-        activeMode = GameMode.Speed;
-        
-        currentLevelIndex = GetSavedCampaignLevelIndex();
-
-        StartActiveSetup();
-    }
-
-    private void StartActiveSetup()
-    {
-        if (levels == null || levels.Count == 0)
-        {
-            Debug.LogError("No levels configured in GameManager.");
+            FailRun("RESERVE DEPLETED");
             return;
         }
 
-        activeLevel = levels[currentLevelIndex];
-        ResetReverseState();
+        if (checkpointElapsed >= gameConfig.saveCheckpointIntervalSeconds)
+            SaveRealRunCritical();
+    }
 
-        // Panel Activations
+    private float CalculateAvailableGameplayDelta(float requestedDelta)
+    {
+        if (sessionRun == null || sessionRun.levelState == null)
+            return 0f;
+        float available = sessionRun.levelState.reserveActive
+            ? sessionRun.currentReserveSeconds
+            : sessionRun.levelState.normalTimeRemaining + sessionRun.currentReserveSeconds;
+        return Mathf.Min(Mathf.Max(0f, requestedDelta), Mathf.Max(0f, available));
+    }
+
+    private void AdvanceReverseCooldown(float deltaTime)
+    {
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        if (!levelState.reverseActive && levelState.reverseCooldownRemaining > 0f)
+            levelState.reverseCooldownRemaining = Mathf.Max(0f, levelState.reverseCooldownRemaining - deltaTime);
+    }
+
+    private void StartOrContinueRun()
+    {
+        if (HasRealRun)
+        {
+            ContinueRun();
+            return;
+        }
+        StartNewRun();
+    }
+
+    public void StartNewRun()
+    {
+        if (HasRealRun)
+        {
+            rogueliteUI.ShowAbandonConfirmation();
+            return;
+        }
+
+        UpgradeSnapshotData snapshot = UpgradeCatalog.CaptureSnapshot(gameConfig, saveData.profile);
+        Guid runGuid = Guid.NewGuid();
+        int seed = BitConverter.ToInt32(runGuid.ToByteArray(), 0);
+        if (seed == 0)
+            seed = 1;
+        random = new DeterministicRandom(seed);
+
+        sessionRun = new ActiveRunData
+        {
+            runId = runGuid.ToString("N"),
+            runSaveVersion = gameConfig.saveVersion,
+            runSeed = seed,
+            randomState = NeonSaveService.EncodeRandomState(random.State),
+            currentLevelIndex = 0,
+            currentLevelId = campaign.GetLevel(0).stableId,
+            currentHealth = snapshot.maxHealth,
+            currentReserveSeconds = snapshot.startingReserveSeconds,
+            pendingCoins = 0L,
+            levelsCompleted = 0,
+            betweenLevels = false,
+            upgrades = snapshot
+        };
+        saveData.activeRun = sessionRun;
+        isDebugSession = false;
+        terminalRequested = false;
+        InitializeCurrentLevelState();
+        SaveRealRunCritical();
+        EnterCurrentLevel(true, false);
+    }
+
+    public void ContinueRun()
+    {
+        if (!HasRealRun)
+        {
+            ShowMainMenu();
+            return;
+        }
+
+        sessionRun = saveData.activeRun;
+        isDebugSession = false;
+        terminalRequested = false;
+        RestoreRandom();
+
+        if (sessionRun.currentHealth <= 0)
+        {
+            FailRun("HEALTH DEPLETED");
+            return;
+        }
+        if (sessionRun.levelState != null && sessionRun.levelState.reserveActive && sessionRun.currentReserveSeconds <= 0f)
+        {
+            FailRun("RESERVE DEPLETED");
+            return;
+        }
+
+        if (sessionRun.betweenLevels)
+        {
+            InitializeCurrentLevelState();
+            SaveRealRunCritical();
+            EnterCurrentLevel(true, false);
+        }
+        else
+        {
+            EnterCurrentLevel(false, true);
+        }
+    }
+
+    private void InitializeCurrentLevelState()
+    {
+        activeLevel = campaign.GetLevel(sessionRun.currentLevelIndex);
+        if (activeLevel == null)
+            throw new InvalidOperationException("Configured campaign level is missing at index " + sessionRun.currentLevelIndex + ".");
+
+        RestoreRandom();
+        int cellCount = Mathf.Max(2, activeLevel.gridSize);
+        cellCount *= cellCount;
+        if (!GridSequenceRules.Initialize(cellCount, ref random, out GridSequenceState sequence))
+            sequence = new GridSequenceState(0, 1, 2);
+
+        ActiveLevelStateData levelState = new ActiveLevelStateData
+        {
+            normalTimeRemaining = Mathf.Max(0.1f, activeLevel.timeLimit),
+            reserveActive = false,
+            objectiveProgress = 0,
+            smallIndex = sequence.small,
+            mediumIndex = sequence.medium,
+            largeIndex = sequence.large,
+            reverseActive = false,
+            reverseCorrectTapsRemaining = 0,
+            reverseCooldownRemaining = 0f,
+            rotationAngle = 0f,
+            scalePhase = activeLevel.scaleEnabled ? random.NextFloat01() : 0f,
+            scaleDirection = random.Range(0, 2) == 0 ? -1 : 1,
+            movementPosition = Vector2.zero,
+            movementDirection = activeLevel.movementEnabled
+                ? random.NextValidUnitDirection(gameConfig.minimumMovementAxisComponent)
+                : Vector2.one.normalized,
+            rewardGranted = false
+        };
+
+        sessionRun.currentLevelId = activeLevel.stableId;
+        sessionRun.levelState = levelState;
+        sessionRun.betweenLevels = false;
+        StoreRandom();
+    }
+
+    private void EnterCurrentLevel(bool showIntroduction, bool restoring)
+    {
+        activeLevel = campaign.GetLevel(sessionRun.currentLevelIndex);
+        if (activeLevel == null)
+        {
+            Debug.LogError("Cannot enter a missing campaign level.");
+            ReturnToMainMenu();
+            return;
+        }
+
+        presentationToken++;
+        terminalRequested = false;
+        feedbackController.ResetImmediate();
+        feedbackController.SetPresentationPaused(applicationSuspended);
+        ConfigureGameplayPanels();
+        ConfigureGridHierarchyAndSize();
+        BuildGrid();
+        RepairOrRestoreSequence();
+        ApplyGridMotionState(false, 0f);
+        ApplyLevelTheme();
+        UpdateGameplayUI();
+
+        if (restoring && sessionRun.levelState.reverseActive)
+            feedbackController.RestoreReverseActive();
+
+        state = showIntroduction ? FlowState.LevelIntro : FlowState.Playing;
+        if (showIntroduction)
+        {
+            if (introCoroutine != null)
+                StopCoroutine(introCoroutine);
+            int token = presentationToken;
+            introCoroutine = StartCoroutine(LevelIntroductionRoutine(token));
+        }
+        SaveRealRunCritical();
+    }
+
+    private void ConfigureGameplayPanels()
+    {
+        rogueliteUI.HideShop();
+        rogueliteUI.HideAbandonConfirmation();
         mainMenuPanel.SetActive(false);
         gameplayPanel.SetActive(true);
         successPanel.SetActive(false);
         failPanel.SetActive(false);
         settingsPanel.SetActive(false);
+    }
 
-        ConfigurePlayAreaRotation();
-
-        // Camera styling
-        Camera.main.backgroundColor = activeLevel.backgroundColor;
-        Camera.main.clearFlags = CameraClearFlags.SolidColor;
-        gameplayPanel.GetComponent<Image>().color = activeLevel.backgroundColor;
-
-        // Custom start states per mode
-        if (activeMode == GameMode.Campaign)
+    private void ApplyLevelTheme()
+    {
+        Camera mainCamera = Camera.main;
+        if (mainCamera != null)
         {
-            levelTimer = activeLevel.timeLimit;
-            correctClicksRemaining = activeLevel.requiredCorrectClicks;
-            levelText.text = $"LEVEL {activeLevel.levelNumber}";
+            mainCamera.backgroundColor = activeLevel.backgroundColor;
+            mainCamera.clearFlags = CameraClearFlags.SolidColor;
         }
-        else if (activeMode == GameMode.Timed)
-        {
-            levelTimer = 60f; // 1-minute fixed
-            correctClicksRemaining = 0; // Not used
-            levelText.text = "TIMED MODE";
-        }
-        else if (activeMode == GameMode.Speed)
-        {
-            levelTimer = 0f; // Starts at zero, counts up
-            correctClicksRemaining = 100; // Click 100 squares as fast as possible
-            levelText.text = "SPEED MODE";
-        }
-
+        Image gameplayBackground = gameplayPanel.GetComponent<Image>();
+        if (gameplayBackground != null)
+            gameplayBackground.color = activeLevel.backgroundColor;
         levelText.color = activeLevel.textPrimaryColor;
-        timerText.color = activeLevel.textPrimaryColor;
         remainingText.color = activeLevel.textPrimaryColor;
+        rogueliteUI.ApplyGameplayTheme(activeLevel.textPrimaryColor, activeLevel.outlineColor);
+    }
 
-        UpdateTimerUI();
-        UpdateRemainingUI();
+    private IEnumerator LevelIntroductionRoutine(int token)
+    {
+        const float duration = 0.45f;
+        float elapsed = 0f;
+        Vector3 originalScale = levelText.rectTransform.localScale;
+        while (elapsed < duration && token == presentationToken)
+        {
+            if (!applicationSuspended && state != FlowState.Settings)
+                elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+            levelText.rectTransform.localScale = originalScale * Mathf.Lerp(1.18f, 1f, t);
+            yield return null;
+        }
+        levelText.rectTransform.localScale = originalScale;
+        introCoroutine = null;
+        if (token == presentationToken && state == FlowState.LevelIntro)
+            state = FlowState.Playing;
+    }
 
-        // Build playfield grid
-        BuildGrid();
+    private void ConfigureGridHierarchyAndSize()
+    {
+        boundsRoot = gridContainer.parent as RectTransform;
+        if (boundsRoot == null)
+            throw new InvalidOperationException("GridContainer requires a RectTransform parent to define gameplay bounds.");
 
-        // Illuminate neon squares
-        InitializeLitSquares();
+        AspectRatioFitter fitter = gridContainer.GetComponent<AspectRatioFitter>();
+        if (fitter != null)
+            fitter.enabled = false;
+        GridLayoutGroup legacyLayout = gridContainer.GetComponent<GridLayoutGroup>();
+        if (legacyLayout != null)
+            Destroy(legacyLayout);
 
-        isGameActive = true;
+        gridContainer.anchorMin = new Vector2(0.5f, 0.5f);
+        gridContainer.anchorMax = new Vector2(0.5f, 0.5f);
+        gridContainer.pivot = new Vector2(0.5f, 0.5f);
+        gridContainer.sizeDelta = Vector2.zero;
+        Canvas.ForceUpdateCanvases();
+
+        if (rotationScaleRoot == null)
+        {
+            rotationScaleRoot = CreateRectTransform("GridRotationScaleRoot", gridContainer);
+            gridContentRoot = CreateRectTransform("GridContent", rotationScaleRoot);
+            StretchToParent(gridContentRoot);
+        }
+
+        Vector2 boundsSize = boundsRoot.rect.size;
+        float shortest = Mathf.Max(1f, Mathf.Min(boundsSize.x, boundsSize.y));
+        float globalPadding = shortest * gameConfig.gameplayBoundsPaddingNormalized;
+        float levelPadding = shortest * Mathf.Max(0f, activeLevel.movementTravelPaddingNormalized);
+        float travel = activeLevel.movementEnabled ? shortest * gameConfig.movementTravelAllowanceNormalized : 0f;
+        float maximumScale = activeLevel.scaleEnabled ? Mathf.Max(0.01f, activeLevel.maximumGridScale) : 1f;
+        float worstRotation = Mathf.Approximately(activeLevel.rotateSpeed, 0f) ? 1f : Mathf.Sqrt(2f);
+        float available = Mathf.Max(1f, shortest - 2f * (globalPadding + levelPadding + travel));
+        baseGridSide = Mathf.Max(1f, available / (maximumScale * worstRotation));
+
+        float targetCell = baseGridSide / Mathf.Max(2, activeLevel.gridSize);
+        if (targetCell < gameConfig.minimumTouchTargetPixels)
+        {
+            Debug.LogWarning($"Level {activeLevel.levelNumber} touch target is approximately {targetCell:0}px, below the configured {gameConfig.minimumTouchTargetPixels:0}px target.");
+        }
+        rotationScaleRoot.sizeDelta = new Vector2(baseGridSide, baseGridSide);
+        rotationScaleRoot.anchoredPosition = Vector2.zero;
+    }
+
+    private static RectTransform CreateRectTransform(string objectName, Transform parent)
+    {
+        GameObject child = new GameObject(objectName, typeof(RectTransform));
+        child.transform.SetParent(parent, false);
+        RectTransform rect = child.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        return rect;
+    }
+
+    private static void StretchToParent(RectTransform rect)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+        rect.pivot = new Vector2(0.5f, 0.5f);
     }
 
     private void BuildGrid()
     {
-        foreach (var sq in instantiatedSquares)
+        for (int i = 0; i < instantiatedSquares.Count; i++)
         {
-            Destroy(sq.gameObject);
+            if (instantiatedSquares[i] != null)
+                Destroy(instantiatedSquares[i].gameObject);
         }
         instantiatedSquares.Clear();
 
-        int n = activeLevel.gridSize;
-        if (n < 2) n = 2;
+        int size = Mathf.Max(2, activeLevel.gridSize);
+        float spacing = baseGridSide * 0.025f;
+        float cellSize = Mathf.Max(1f, (baseGridSide - spacing * (size - 1)) / size);
+        GridLayoutGroup layout = gridContentRoot.GetComponent<GridLayoutGroup>();
+        if (layout == null)
+            layout = gridContentRoot.gameObject.AddComponent<GridLayoutGroup>();
+        layout.cellSize = new Vector2(cellSize, cellSize);
+        layout.spacing = new Vector2(spacing, spacing);
+        layout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        layout.constraintCount = size;
+        layout.childAlignment = TextAnchor.MiddleCenter;
+        layout.padding = new RectOffset(0, 0, 0, 0);
 
-        float containerSize = Mathf.Min(gridContainer.rect.width, gridContainer.rect.height);
-        float spacing = containerSize * 0.03f;
-        float totalSpacing = spacing * (n - 1);
-        float cellSize = (containerSize - totalSpacing) / n;
-
-        GridLayoutGroup gridLayout = gridContainer.GetComponent<GridLayoutGroup>();
-        if (gridLayout == null)
+        for (int y = 0; y < size; y++)
         {
-            gridLayout = gridContainer.gameObject.AddComponent<GridLayoutGroup>();
-        }
-
-        gridLayout.cellSize = new Vector2(cellSize, cellSize);
-        gridLayout.spacing = new Vector2(spacing, spacing);
-        gridLayout.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-        gridLayout.constraintCount = n;
-        gridLayout.childAlignment = TextAnchor.MiddleCenter;
-
-        Canvas.ForceUpdateCanvases();
-
-        for (int y = 0; y < n; y++)
-        {
-            for (int x = 0; x < n; x++)
+            for (int x = 0; x < size; x++)
             {
-                GameObject cellObj = Instantiate(squarePrefab, gridContainer);
-                cellObj.name = $"Square_{x}_{y}";
-                
-                GameSquare sq = cellObj.GetComponent<GameSquare>();
-                sq.Setup(
-                    x, y, 
-                    solidSquareSprite, 
-                    outlineSquareSprite, 
-                    activeLevel.cellColor, 
+                GameObject cellObject = Instantiate(squarePrefab, gridContentRoot);
+                cellObject.name = $"Square_{x}_{y}";
+                GameSquare square = cellObject.GetComponent<GameSquare>();
+                square.Setup(
+                    x,
+                    y,
+                    solidSquareSprite,
+                    outlineSquareSprite,
+                    activeLevel.cellColor,
                     activeLevel.outlineColor,
                     activeLevel.smallScale,
                     activeLevel.mediumScale,
-                    activeLevel.fullScale
-                );
-
-                sq.onClicked = OnSquareClicked;
-                instantiatedSquares.Add(sq);
+                    activeLevel.fullScale);
+                square.onClicked = OnSquareClicked;
+                instantiatedSquares.Add(square);
             }
         }
-    }
-
-    private void ConfigurePlayAreaRotation()
-    {
-        gridContainer.localRotation = Quaternion.identity;
-
-        // A square's largest axis-aligned footprint occurs at 45 degrees. Scaling
-        // it by 1/sqrt(2) keeps every cell fully inside the original play area.
-        float safeScale = Mathf.Approximately(activeLevel.rotateSpeed, 0f)
-            ? 1f
-            : 1f / Mathf.Sqrt(2f);
-        gridContainer.localScale = Vector3.one * safeScale;
-
         Canvas.ForceUpdateCanvases();
     }
 
-    private void RotatePlayArea()
+    private void RepairOrRestoreSequence()
     {
-        if (activeLevel == null || Mathf.Approximately(activeLevel.rotateSpeed, 0f)) return;
-
-        gridContainer.Rotate(0f, 0f, activeLevel.rotateSpeed * Time.deltaTime, Space.Self);
-    }
-
-    private void InitializeLitSquares()
-    {
-        smallLitSquare = null;
-        mediumLitSquare = null;
-        largeLitSquare = null;
-
-        if (instantiatedSquares.Count < 3) return;
-
-        List<GameSquare> pool = new List<GameSquare>(instantiatedSquares);
-        
-        int r1 = Random.Range(0, pool.Count);
-        largeLitSquare = pool[r1];
-        pool.RemoveAt(r1);
-
-        int r2 = Random.Range(0, pool.Count);
-        mediumLitSquare = pool[r2];
-        pool.RemoveAt(r2);
-
-        int r3 = Random.Range(0, pool.Count);
-        smallLitSquare = pool[r3];
-
-        largeLitSquare.SetLitSize(GameSquare.LitSize.Large, false);
-        mediumLitSquare.SetLitSize(GameSquare.LitSize.Medium, false);
-        smallLitSquare.SetLitSize(GameSquare.LitSize.Small, false);
-    }
-
-    private void OnSquareClicked(GameSquare sq)
-    {
-        if (!isGameActive || isGameplayTransitionLocked) return;
-
-        bool isCorrect = isReverseActive ? (sq == smallLitSquare) : (sq == largeLitSquare);
-
-        if (isCorrect)
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        GridSequenceState sequence = new GridSequenceState(levelState.smallIndex, levelState.mediumIndex, levelState.largeIndex);
+        if (!GridSequenceRules.Validate(sequence, instantiatedSquares.Count))
         {
-            TriggerScreenFlash(true);
+            RestoreRandom();
+            GridSequenceRules.Initialize(instantiatedSquares.Count, ref random, out sequence);
+            levelState.smallIndex = sequence.small;
+            levelState.mediumIndex = sequence.medium;
+            levelState.largeIndex = sequence.large;
+            StoreRandom();
+            Debug.LogWarning("Invalid saved target sequence was rebuilt deterministically.");
+        }
+        ApplySequenceVisuals(false);
+    }
 
-            if (activeMode == GameMode.Campaign)
-            {
-                correctClicksRemaining--;
-                UpdateRemainingUI();
-                if (correctClicksRemaining <= 0)
-                {
-                    CampaignLevelCompleted();
-                    return;
-                }
-            }
-            else if (activeMode == GameMode.Timed)
-            {
-                scoreCount++;
-                UpdateRemainingUI();
-            }
-            else if (activeMode == GameMode.Speed)
-            {
-                correctClicksRemaining--;
-                UpdateRemainingUI();
-                if (correctClicksRemaining <= 0)
-                {
-                    SpeedModeCompleted();
-                    return;
-                }
-            }
+    private void ApplySequenceVisuals(bool animate)
+    {
+        for (int i = 0; i < instantiatedSquares.Count; i++)
+            instantiatedSquares[i].SetLitSize(GameSquare.LitSize.None, animate);
 
-            if (isReverseActive)
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        if (IsValidSquareIndex(levelState.smallIndex))
+            instantiatedSquares[levelState.smallIndex].SetLitSize(GameSquare.LitSize.Small, animate);
+        if (IsValidSquareIndex(levelState.mediumIndex))
+            instantiatedSquares[levelState.mediumIndex].SetLitSize(GameSquare.LitSize.Medium, animate);
+        if (IsValidSquareIndex(levelState.largeIndex))
+            instantiatedSquares[levelState.largeIndex].SetLitSize(GameSquare.LitSize.Large, animate);
+    }
+
+    private bool IsValidSquareIndex(int index)
+    {
+        return index >= 0 && index < instantiatedSquares.Count;
+    }
+
+    private void OnSquareClicked(GameSquare square)
+    {
+        if (!SimulationIsActive || square == null)
+            return;
+
+        int clickedIndex = square.gridY * Mathf.Max(2, activeLevel.gridSize) + square.gridX;
+        if (!IsValidSquareIndex(clickedIndex) || instantiatedSquares[clickedIndex] != square)
+            return;
+
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        int correctIndex = levelState.reverseActive ? levelState.smallIndex : levelState.largeIndex;
+        if (clickedIndex != correctIndex)
+        {
+            HandleMistake();
+            return;
+        }
+
+        HandleCorrectTap();
+    }
+
+    private void HandleMistake()
+    {
+        TriggerScreenFlash(false);
+        sessionRun.currentHealth = Mathf.Max(0, sessionRun.currentHealth - 1);
+        if (sessionRun.levelState.reverseActive)
+            feedbackController.PlayReverseMistake();
+        UpdateGameplayUI();
+        SaveRealRunCritical();
+
+        if (sessionRun.currentHealth <= 0)
+            FailRun("HEALTH DEPLETED");
+    }
+
+    private void HandleCorrectTap()
+    {
+        TriggerScreenFlash(true);
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        GridSequenceState sequence = new GridSequenceState(levelState.smallIndex, levelState.mediumIndex, levelState.largeIndex);
+        RestoreRandom();
+
+        bool reverseWasActive = levelState.reverseActive;
+        bool advanced = reverseWasActive
+            ? GridSequenceRules.AdvanceReverse(ref sequence, instantiatedSquares.Count, ref random)
+            : GridSequenceRules.AdvanceNormal(ref sequence, instantiatedSquares.Count, ref random);
+        if (!advanced)
+        {
+            Debug.LogError("Target sequence could not advance; input was ignored safely.");
+            return;
+        }
+
+        levelState.smallIndex = sequence.small;
+        levelState.mediumIndex = sequence.medium;
+        levelState.largeIndex = sequence.large;
+        levelState.objectiveProgress++;
+        if (reverseWasActive)
+            levelState.reverseCorrectTapsRemaining = Mathf.Max(0, levelState.reverseCorrectTapsRemaining - 1);
+        StoreRandom();
+        ApplySequenceVisuals(true);
+        if (reverseWasActive && IsValidSquareIndex(levelState.largeIndex))
+            feedbackController.PlayReverseCorrect(instantiatedSquares[levelState.largeIndex]);
+        UpdateGameplayUI();
+
+        if (levelState.objectiveProgress >= Mathf.Max(1, activeLevel.requiredCorrectClicks))
+        {
+            CompleteCurrentLevel();
+            return;
+        }
+
+        if (reverseWasActive && levelState.reverseCorrectTapsRemaining <= 0)
+            BeginReverseExit();
+        else if (!reverseWasActive)
+            TryBeginReverse();
+
+        SaveRealRunCritical();
+    }
+
+    private void TryBeginReverse()
+    {
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        if (!activeLevel.reverseEnabled || levelState.reverseActive || levelState.reverseCooldownRemaining > 0f)
+            return;
+
+        RestoreRandom();
+        float roll = random.NextFloat01();
+        if (roll > Mathf.Clamp(gameConfig.reverseTriggerChancePerCorrectClick, 0.01f, 1f))
+        {
+            StoreRandom();
+            return;
+        }
+
+        int minimum = Mathf.Max(1, gameConfig.reverseMinCorrectClicks);
+        int maximum = Mathf.Max(minimum, gameConfig.reverseMaxCorrectClicks);
+        levelState.reverseCorrectTapsRemaining = random.Range(minimum, maximum + 1);
+        levelState.reverseActive = true;
+        StoreRandom();
+        state = FlowState.ReverseEntrance;
+        int token = ++presentationToken;
+        SaveRealRunCritical();
+
+        feedbackController.PlayReverseEntrance(
+            IsValidSquareIndex(levelState.smallIndex) ? instantiatedSquares[levelState.smallIndex] : null,
+            () =>
             {
-                CycleLitSquaresReverse();
-                if (feedbackController != null)
-                {
-                    feedbackController.PlayReverseCorrect(largeLitSquare);
-                }
-                reverseCorrectClicksRemaining--;
+                if (token == presentationToken && state == FlowState.ReverseEntrance && !terminalRequested)
+                    state = FlowState.Playing;
+            });
+    }
 
-                if (reverseCorrectClicksRemaining <= 0)
-                {
-                    EndReverse();
-                }
+    private void BeginReverseExit()
+    {
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        levelState.reverseActive = false;
+        levelState.reverseCorrectTapsRemaining = 0;
+        levelState.reverseCooldownRemaining = Mathf.Max(
+            0f,
+            gameConfig.reverseCooldownSeconds + (sessionRun.upgrades?.reverseCooldownBonusSeconds ?? 0f));
+        state = FlowState.ReverseExit;
+        int token = ++presentationToken;
+        SaveRealRunCritical();
 
-                return;
-            }
+        feedbackController.PlayReverseExit(() =>
+        {
+            if (token == presentationToken && state == FlowState.ReverseExit && !terminalRequested)
+                state = FlowState.Playing;
+        });
+    }
+
+    private void CompleteCurrentLevel()
+    {
+        if (terminalRequested || state != FlowState.Playing)
+            return;
+        state = FlowState.LevelComplete;
+        terminalRequested = true;
+        presentationToken++;
+        feedbackController.ResetImmediate();
+
+        if (isDebugSession)
+        {
+            ShowDebugLevelComplete();
+            return;
+        }
+
+        ActiveLevelStateData completedState = sessionRun.levelState;
+        if (!completedState.rewardGranted)
+        {
+            completedState.rewardGranted = true;
+            sessionRun.pendingCoins = RunEconomyRules.SaturatingAdd(sessionRun.pendingCoins, Math.Max(0L, activeLevel.completionCoinReward));
+            sessionRun.levelsCompleted = Math.Max(sessionRun.levelsCompleted, sessionRun.currentLevelIndex + 1);
+        }
+
+        int completedLevelNumber = activeLevel.levelNumber;
+        if (sessionRun.currentLevelIndex >= campaign.LevelCount - 1)
+        {
+            EndRealRun("CAMPAIGN COMPLETE", true, Math.Max(0L, campaign.completionBonusCoins));
+            return;
+        }
+
+        sessionRun.currentLevelIndex++;
+        LevelData nextLevel = campaign.GetLevel(sessionRun.currentLevelIndex);
+        sessionRun.currentLevelId = nextLevel.stableId;
+        sessionRun.betweenLevels = true;
+        SaveRealRunCritical();
+
+        gameplayPanel.SetActive(false);
+        successPanel.SetActive(true);
+        successLevelText.text =
+            $"LEVEL {completedLevelNumber} COMPLETE\n" +
+            $"HP {sessionRun.currentHealth}/{sessionRun.upgrades.maxHealth}   RESERVE {sessionRun.currentReserveSeconds:0.0}s\n" +
+            $"PENDING {sessionRun.pendingCoins:N0}\nNEXT: LEVEL {nextLevel.levelNumber}";
+        ConfigureSuccessButton("NEXT LEVEL", StartNextLevelFromSummary, true);
+    }
+
+    private void StartNextLevelFromSummary()
+    {
+        if (!HasRealRun || !saveData.activeRun.betweenLevels)
+        {
+            ShowMainMenu();
+            return;
+        }
+        sessionRun = saveData.activeRun;
+        terminalRequested = false;
+        InitializeCurrentLevelState();
+        SaveRealRunCritical();
+        EnterCurrentLevel(true, false);
+    }
+
+    private void ShowDebugLevelComplete()
+    {
+        gameplayPanel.SetActive(false);
+        successPanel.SetActive(true);
+        successLevelText.text = $"DEBUG LEVEL {activeLevel.levelNumber} COMPLETE\nNO SAVE OR REWARDS CHANGED";
+        ConfigureSuccessButton("RETURN TO MENU", ReturnToMainMenu, true);
+    }
+
+    private void ConfigureSuccessButton(string label, UnityEngine.Events.UnityAction action, bool visible)
+    {
+        if (successNextButton == null)
+            return;
+        successNextButton.gameObject.SetActive(visible);
+        BindButton(successNextButton, action);
+        SetButtonText(successNextButton, label);
+    }
+
+    private void FailRun(string reason)
+    {
+        if (terminalRequested)
+            return;
+
+        if (isDebugSession)
+        {
+            terminalRequested = true;
+            state = FlowState.RunSummary;
+            presentationToken++;
+            feedbackController.ResetImmediate();
+            gameplayPanel.SetActive(false);
+            failPanel.SetActive(true);
+            failLevelText.text = "DEBUG RUN ENDED";
+            failReasonText.text = reason + "\nNO SAVE OR REWARDS CHANGED";
+            ConfigureFailPrimary("RETURN TO MENU", ReturnToMainMenu);
+            return;
+        }
+
+        EndRealRun(reason, false, 0L);
+    }
+
+    private void ConfirmAbandonRun()
+    {
+        if (!HasRealRun)
+        {
+            ShowMainMenu();
+            return;
+        }
+
+        sessionRun = saveData.activeRun;
+        isDebugSession = false;
+        terminalRequested = false;
+        EndRealRun("RUN ABANDONED", false, 0L);
+    }
+
+    private void EndRealRun(string reason, bool campaignCompleted, long completionBonus)
+    {
+        if (terminalRequested && state == FlowState.RunSummary)
+            return;
+        if (sessionRun == null)
+            sessionRun = saveData.activeRun;
+        if (sessionRun == null)
+            return;
+
+        terminalRequested = true;
+        state = FlowState.RunSummary;
+        presentationToken++;
+        feedbackController.ResetImmediate();
+        SetSquareAnimationsPaused(false);
+
+        if (!RunEconomyRules.TryBankAndClearActiveRun(
+                saveData,
+                sessionRun.runId,
+                reason,
+                campaignCompleted,
+                completionBonus,
+                campaign.LevelCount,
+                out RunSummaryData summary))
+        {
+            Debug.LogError("Run terminal transaction was rejected because the active run identity changed.");
+            return;
+        }
+        SaveEnvelopeCritical();
+        sessionRun = null;
+        activeLevel = null;
+        isDebugSession = false;
+        gameplayPanel.SetActive(false);
+
+        if (campaignCompleted)
+        {
+            successPanel.SetActive(true);
+            failPanel.SetActive(false);
+            successLevelText.text =
+                "CAMPAIGN COMPLETE\n" +
+                $"LEVEL REWARDS {summary.runLevelRewards:N0}\n" +
+                $"COMPLETION BONUS {summary.completionBonus:N0}\n" +
+                $"TOTAL EARNED {summary.totalEarned:N0}\n" +
+                $"NEW BALANCE {summary.newWalletBalance:N0}";
+            ConfigureSuccessButton("UPGRADES", OpenUpgradeShop, true);
         }
         else
         {
-            TriggerScreenFlash(false);
-
-            // A miss during Reverse does not advance the sequence.
-            if (isReverseActive)
-            {
-                if (feedbackController != null) feedbackController.PlayReverseMistake();
-                return;
-            }
-        }
-
-        CycleLitSquares();
-
-        if (isCorrect)
-        {
-            TryTriggerReverse();
+            successPanel.SetActive(false);
+            failPanel.SetActive(true);
+            failLevelText.text = reason == "RUN ABANDONED" ? "RUN ENDED" : "RUN FAILED";
+            failReasonText.text =
+                $"{reason}\n" +
+                $"HIGHEST LEVEL {summary.highestLevelEntered}\n" +
+                $"LEVELS COMPLETED {summary.levelsCompleted}\n" +
+                $"COINS EARNED {summary.totalEarned:N0}\n" +
+                $"NEW BALANCE {summary.newWalletBalance:N0}";
+            ConfigureFailPrimary("UPGRADES", OpenUpgradeShop);
         }
     }
 
-    private void CycleLitSquares()
+    private void ConfigureFailPrimary(string label, UnityEngine.Events.UnityAction action)
     {
-        largeLitSquare.SetLitSize(GameSquare.LitSize.None, true);
+        if (failPrimaryButton == null)
+            return;
+        failPrimaryButton.gameObject.SetActive(true);
+        BindButton(failPrimaryButton, action);
+        SetButtonText(failPrimaryButton, label);
+    }
 
-        largeLitSquare = mediumLitSquare;
-        largeLitSquare.SetLitSize(GameSquare.LitSize.Large, true);
+    private static void SetButtonText(Button button, string text)
+    {
+        TMP_Text label = button == null ? null : button.GetComponentInChildren<TMP_Text>();
+        if (label != null)
+            label.text = text;
+    }
 
-        mediumLitSquare = smallLitSquare;
-        mediumLitSquare.SetLitSize(GameSquare.LitSize.Medium, true);
+    private void AdvanceGridMotion(float deltaTime)
+    {
+        if (sessionRun?.levelState == null || rotationScaleRoot == null || boundsRoot == null)
+            return;
 
-        List<GameSquare> unlitSquares = new List<GameSquare>();
-        foreach (var sq in instantiatedSquares)
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        float stabilizer = Mathf.Clamp(sessionRun.upgrades?.gridStabilizerMultiplier ?? 1f, 0.01f, 1f);
+        if (!Mathf.Approximately(activeLevel.rotateSpeed, 0f))
         {
-            if (sq != largeLitSquare && sq != mediumLitSquare)
-            {
-                unlitSquares.Add(sq);
-            }
+            levelState.rotationAngle = Mathf.Repeat(
+                levelState.rotationAngle + activeLevel.rotateSpeed * stabilizer * deltaTime + 180f,
+                360f) - 180f;
         }
 
-        if (unlitSquares.Count > 0)
+        if (activeLevel.scaleEnabled)
         {
-            smallLitSquare = unlitSquares[Random.Range(0, unlitSquares.Count)];
-            smallLitSquare.SetLitSize(GameSquare.LitSize.Small, true);
+            currentGridScale = GridMotionMath.AdvanceTrianglePhase(
+                ref levelState.scalePhase,
+                ref levelState.scaleDirection,
+                Mathf.Max(0.01f, activeLevel.minimumGridScale),
+                Mathf.Max(activeLevel.minimumGridScale, activeLevel.maximumGridScale),
+                Mathf.Max(0.05f, activeLevel.scaleCycleDuration * 0.5f),
+                deltaTime * stabilizer);
         }
         else
         {
-            smallLitSquare = null;
-        }
-    }
-
-    private void CycleLitSquaresReverse()
-    {
-        GameSquare clickedSmallSquare = smallLitSquare;
-        clickedSmallSquare.SetLitSize(GameSquare.LitSize.None, true);
-
-        smallLitSquare = mediumLitSquare;
-        smallLitSquare.SetLitSize(GameSquare.LitSize.Small, true);
-
-        mediumLitSquare = largeLitSquare;
-        mediumLitSquare.SetLitSize(GameSquare.LitSize.Medium, true);
-
-        List<GameSquare> candidates = new List<GameSquare>();
-        foreach (var sq in instantiatedSquares)
-        {
-            if (sq != clickedSmallSquare && sq != smallLitSquare && sq != mediumLitSquare)
-            {
-                candidates.Add(sq);
-            }
+            currentGridScale = 1f;
         }
 
-        // Every supported grid has at least four cells, but retain a safe fallback.
-        if (candidates.Count == 0) candidates.Add(clickedSmallSquare);
-
-        largeLitSquare = candidates[Random.Range(0, candidates.Count)];
-        largeLitSquare.SetLitSize(GameSquare.LitSize.Large, true);
+        ApplyGridMotionState(true, deltaTime);
     }
 
-    private void TryTriggerReverse()
+    private void ApplyGridMotionState(bool advanceMovement, float movementDelta)
     {
-        if (isReverseActive || activeLevel == null || !activeLevel.reverseEnabled || gameConfig == null) return;
-        if (reverseCooldownRemaining > 0f) return;
-        if (Random.value > gameConfig.reverseTriggerChancePerCorrectClick) return;
+        if (sessionRun?.levelState == null || rotationScaleRoot == null || boundsRoot == null)
+            return;
 
-        int minClicks = Mathf.Max(1, gameConfig.reverseMinCorrectClicks);
-        int maxClicks = Mathf.Max(minClicks, gameConfig.reverseMaxCorrectClicks);
-        reverseCorrectClicksRemaining = Random.Range(minClicks, maxClicks + 1);
-        isReverseActive = true;
-        isGameplayTransitionLocked = true;
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        if (!activeLevel.scaleEnabled)
+            currentGridScale = 1f;
+        else if (!advanceMovement)
+            currentGridScale = Mathf.Lerp(
+                Mathf.Max(0.01f, activeLevel.minimumGridScale),
+                Mathf.Max(activeLevel.minimumGridScale, activeLevel.maximumGridScale),
+                Mathf.Clamp01(levelState.scalePhase));
 
-        if (feedbackController != null)
+        rotationScaleRoot.localRotation = Quaternion.Euler(0f, 0f, levelState.rotationAngle);
+        rotationScaleRoot.localScale = Vector3.one * currentGridScale;
+
+        Vector2 boundsHalf = boundsRoot.rect.size * 0.5f;
+        float shortest = Mathf.Max(1f, Mathf.Min(boundsRoot.rect.width, boundsRoot.rect.height));
+        float padding = shortest * (gameConfig.gameplayBoundsPaddingNormalized + Mathf.Max(0f, activeLevel.movementTravelPaddingNormalized));
+        boundsHalf = Vector2.Max(Vector2.zero, boundsHalf - Vector2.one * padding);
+        Vector2 objectHalf = GridMotionMath.TransformedAabbHalfExtents(baseGridSide, currentGridScale, levelState.rotationAngle);
+        Vector2 naturalRoom = Vector2.Max(Vector2.zero, boundsHalf - objectHalf);
+        float configuredTravel = activeLevel.movementEnabled
+            ? shortest * Mathf.Max(0.01f, gameConfig.movementTravelAllowanceNormalized)
+            : 0f;
+        Vector2 allowedRoom = Vector2.Min(naturalRoom, Vector2.one * configuredTravel);
+        Vector2 movementBoundsHalf = objectHalf + allowedRoom;
+        Vector2 position = levelState.movementPosition;
+        Vector2 direction = levelState.movementDirection;
+
+        if (advanceMovement && activeLevel.movementEnabled)
         {
-            feedbackController.PlayReverseEntrance(smallLitSquare, () => isGameplayTransitionLocked = false);
+            float speed = Mathf.Max(0f, activeLevel.movementSpeedNormalized) * shortest *
+                          Mathf.Clamp(sessionRun.upgrades?.gridStabilizerMultiplier ?? 1f, 0.01f, 1f);
+            GridMotionMath.AdvanceStableMovement(ref position, ref direction, speed, movementDelta, movementBoundsHalf, objectHalf);
         }
         else
         {
-            isGameplayTransitionLocked = false;
+            position = GridMotionMath.ClampPosition(position, direction, movementBoundsHalf, objectHalf, out direction);
         }
+
+        levelState.movementPosition = position;
+        levelState.movementDirection = direction;
+        gridContainer.anchoredPosition = position;
     }
 
-    private void EndReverse()
+    private void UpdateGameplayUI()
     {
-        isReverseActive = false;
-        reverseCorrectClicksRemaining = 0;
-        reverseCooldownRemaining = gameConfig != null ? Mathf.Max(0f, gameConfig.reverseCooldownSeconds) : 0f;
-        isGameplayTransitionLocked = true;
+        if (sessionRun == null || activeLevel == null || sessionRun.levelState == null)
+            return;
 
-        if (feedbackController != null)
+        ActiveLevelStateData levelState = sessionRun.levelState;
+        string prefix = isDebugSession ? "DEBUG " : string.Empty;
+        levelText.text =
+            $"<size=17><color=#8D99BC>{prefix}CAMPAIGN</color></size>\n" +
+            $"<b>LEVEL {activeLevel.levelNumber}</b> <size=20><color=#667096>/ {campaign.LevelCount}</color></size>";
+        if (levelState.reserveActive)
         {
-            feedbackController.PlayReverseExit(() => isGameplayTransitionLocked = false);
+            timerText.text =
+                "<size=17><color=#C07B9D>RESERVE</color></size>\n" +
+                $"<b>{sessionRun.currentReserveSeconds:0.0}</b><size=20>s</size>";
+            timerText.color = reservePink;
         }
         else
         {
-            isGameplayTransitionLocked = false;
+            timerText.text =
+                "<size=17><color=#8D99BC>TIME</color></size>\n" +
+                $"<b>{Mathf.CeilToInt(levelState.normalTimeRemaining)}</b><size=20>s</size>";
+            timerText.color = levelState.normalTimeRemaining <= 5f
+                ? new Color(1f, 0.1f, 0.2f, 1f)
+                : activeLevel.textPrimaryColor;
+        }
+
+        int required = Mathf.Max(1, activeLevel.requiredCorrectClicks);
+        remainingText.text =
+            "<size=17><color=#8D99BC>OBJECTIVE</color></size>\n" +
+            $"<b>{Mathf.Clamp(levelState.objectiveProgress, 0, required)} / {required}</b> " +
+            $"<size=17>{(levelState.reverseActive ? "TAP SMALL" : "TAP LARGE")}</size>";
+        remainingText.color = levelState.reverseActive ? reservePink : activeLevel.textPrimaryColor;
+        rogueliteUI.RefreshHud(
+            sessionRun.currentHealth,
+            Mathf.Max(1, sessionRun.upgrades?.maxHealth ?? gameConfig.baseHealth),
+            sessionRun.currentReserveSeconds,
+            Mathf.Max(0f, sessionRun.upgrades?.startingReserveSeconds ?? gameConfig.baseStartingReserveSeconds),
+            sessionRun.pendingCoins,
+            levelState.objectiveProgress,
+            required,
+            levelState.normalTimeRemaining,
+            activeLevel.timeLimit,
+            levelState.reserveActive,
+            levelState.reverseActive,
+            isDebugSession);
+    }
+
+    public void ReturnToMainMenu()
+    {
+        presentationToken++;
+        if (introCoroutine != null)
+        {
+            StopCoroutine(introCoroutine);
+            introCoroutine = null;
+        }
+
+        if (!isDebugSession && sessionRun != null && saveData.activeRun == sessionRun)
+            SaveRealRunCritical();
+        sessionRun = null;
+        activeLevel = null;
+        isDebugSession = false;
+        terminalRequested = false;
+        feedbackController.ResetImmediate();
+        SetSquareAnimationsPaused(false);
+        ShowMainMenu();
+    }
+
+    public void ShowMainMenu()
+    {
+        state = FlowState.MainMenu;
+        rogueliteUI.HideShop();
+        rogueliteUI.HideAbandonConfirmation();
+        mainMenuPanel.SetActive(true);
+        gameplayPanel.SetActive(false);
+        successPanel.SetActive(false);
+        failPanel.SetActive(false);
+        settingsPanel.SetActive(false);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        if (debugLevelSelectController != null)
+            debugLevelSelectController.Close();
+#endif
+        RefreshMainMenu();
+    }
+
+    private void RefreshMainMenu()
+    {
+        ActiveRunData run = saveData?.activeRun;
+        int levelNumber = 1;
+        if (run != null && campaign != null && run.currentLevelIndex >= 0 && run.currentLevelIndex < campaign.LevelCount)
+            levelNumber = campaign.GetLevel(run.currentLevelIndex).levelNumber;
+        rogueliteUI.RefreshMenu(
+            run != null,
+            levelNumber,
+            saveData?.profile?.coins ?? 0L,
+            run?.pendingCoins ?? 0L);
+    }
+
+    public void OpenUpgradeShop()
+    {
+        if (!isDebugSession && sessionRun != null && saveData.activeRun == sessionRun)
+            SaveRealRunCritical();
+
+        sessionRun = null;
+        activeLevel = null;
+        isDebugSession = false;
+        terminalRequested = false;
+        feedbackController.ResetImmediate();
+        mainMenuPanel.SetActive(true);
+        gameplayPanel.SetActive(false);
+        successPanel.SetActive(false);
+        failPanel.SetActive(false);
+        settingsPanel.SetActive(false);
+        state = FlowState.Shop;
+        RefreshMainMenu();
+        rogueliteUI.ShowShop(gameConfig, saveData.profile, HasRealRun);
+    }
+
+    private void OnShopClosed()
+    {
+        ShowMainMenu();
+    }
+
+    private bool TryPurchaseUpgrade(UpgradeId id)
+    {
+        if (!UpgradeCatalog.TryPurchase(gameConfig, saveData.profile, id, HasRealRun, out string reason))
+        {
+            if (!string.IsNullOrEmpty(reason))
+                Debug.Log("Upgrade purchase rejected: " + reason);
+            return false;
+        }
+
+        SaveEnvelopeCritical();
+        RefreshMainMenu();
+        rogueliteUI.RefreshShop(gameConfig, saveData.profile, HasRealRun);
+        return true;
+    }
+
+    public void OpenSettings()
+    {
+        if (state == FlowState.Settings)
+            return;
+        stateBeforeSettings = state;
+        state = FlowState.Settings;
+        settingsPanel.SetActive(true);
+        settingsPanel.transform.SetAsLastSibling();
+        feedbackController.SetPresentationPaused(true);
+        SetSquareAnimationsPaused(true);
+        rogueliteUI.SetHaptics(PlayerPrefs.GetInt("HapticsEnabled", 1) == 1);
+        SaveRealRunCritical();
+    }
+
+    public void CloseSettings()
+    {
+        if (state != FlowState.Settings)
+            return;
+        settingsPanel.SetActive(false);
+        state = stateBeforeSettings;
+        bool remainPaused = applicationSuspended;
+        feedbackController.SetPresentationPaused(remainPaused);
+        SetSquareAnimationsPaused(remainPaused);
+    }
+
+    private void SetHapticsEnabled(bool enabled)
+    {
+        PlayerPrefs.SetInt("HapticsEnabled", enabled ? 1 : 0);
+        PlayerPrefs.Save();
+    }
+
+    private void SetSquareAnimationsPaused(bool paused)
+    {
+        for (int i = 0; i < instantiatedSquares.Count; i++)
+        {
+            if (instantiatedSquares[i] != null)
+                instantiatedSquares[i].SetAnimationsPaused(paused);
         }
     }
 
-    private void ResetReverseState()
+    private void RestoreRandom()
     {
-        isReverseActive = false;
-        reverseCorrectClicksRemaining = 0;
-        reverseCooldownRemaining = 0f;
-        isGameplayTransitionLocked = false;
-        if (feedbackController != null) feedbackController.ResetImmediate();
+        uint fallback = sessionRun != null ? unchecked((uint)sessionRun.runSeed) : 1u;
+        random = new DeterministicRandom(NeonSaveService.ParseRandomState(sessionRun?.randomState, fallback));
+    }
+
+    private void StoreRandom()
+    {
+        if (sessionRun != null)
+            sessionRun.randomState = NeonSaveService.EncodeRandomState(random.State);
+    }
+
+    private void SaveRealRunCritical()
+    {
+        if (isDebugSession || saveData == null || saveData.activeRun == null)
+            return;
+        if (sessionRun != null)
+        {
+            StoreRandom();
+            saveData.activeRun = sessionRun;
+        }
+        SaveEnvelopeCritical();
+    }
+
+    private void SaveEnvelopeCritical()
+    {
+        if (saveService == null || saveData == null)
+            return;
+        saveData.saveVersion = gameConfig.saveVersion;
+        saveData.profile.saveVersion = gameConfig.saveVersion;
+        try
+        {
+            saveService.Save(saveData, gameConfig);
+            saveDirty = false;
+            checkpointElapsed = 0f;
+        }
+        catch (Exception exception)
+        {
+            saveDirty = true;
+            Debug.LogError("Neon Reflex save failed: " + exception.Message);
+        }
     }
 
     private void TriggerScreenFlash(bool success)
     {
+        if (flashOverlay == null)
+            return;
         if (flashCoroutine != null)
-        {
             StopCoroutine(flashCoroutine);
-        }
         flashCoroutine = StartCoroutine(AnimateFlash(success ? flashGreen : flashRed));
     }
 
     private IEnumerator AnimateFlash(Color flashColor)
     {
-        float inDuration = 0.05f;
-        float outDuration = 0.25f;
+        const float inDuration = 0.05f;
+        const float outDuration = 0.25f;
         float elapsed = 0f;
-
-        flashOverlay.color = flashColor;
-
         while (elapsed < inDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
-            float t = elapsed / inDuration;
-            flashOverlay.color = Color.Lerp(Color.clear, flashColor, t);
+            if (!applicationSuspended && state != FlowState.Settings)
+                elapsed += Time.unscaledDeltaTime;
+            flashOverlay.color = Color.Lerp(Color.clear, flashColor, Mathf.Clamp01(elapsed / inDuration));
             yield return null;
         }
 
-        flashOverlay.color = flashColor;
         elapsed = 0f;
-
         while (elapsed < outDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
-            float t = elapsed / outDuration;
-            flashOverlay.color = Color.Lerp(flashColor, Color.clear, t);
+            if (!applicationSuspended && state != FlowState.Settings)
+                elapsed += Time.unscaledDeltaTime;
+            flashOverlay.color = Color.Lerp(flashColor, Color.clear, Mathf.Clamp01(elapsed / outDuration));
             yield return null;
         }
-
         flashOverlay.color = Color.clear;
         flashCoroutine = null;
     }
 
-    private void UpdateTimerUI()
+    private static void TriggerHaptic()
     {
-        if (activeMode == GameMode.Speed)
-        {
-            timerText.text = $"{levelTimer:F2}s";
-            timerText.color = activeLevel.textPrimaryColor;
-        }
-        else
-        {
-            timerText.text = $"{Mathf.CeilToInt(levelTimer)}s";
-            if (levelTimer <= 5f)
-            {
-                timerText.color = new Color(1f, 0.1f, 0.2f);
-            }
-            else
-            {
-                timerText.color = activeLevel.textPrimaryColor;
-            }
-        }
+#if UNITY_ANDROID || UNITY_IOS
+        if (PlayerPrefs.GetInt("HapticsEnabled", 1) == 1)
+            Handheld.Vibrate();
+#endif
     }
 
-    private void UpdateRemainingUI()
+    private void OnApplicationPause(bool paused)
     {
-        if (activeMode == GameMode.Campaign)
-        {
-            remainingText.text = $"{correctClicksRemaining} LEFT";
-        }
-        else if (activeMode == GameMode.Timed)
-        {
-            remainingText.text = $"SCORE: {scoreCount}";
-        }
-        else if (activeMode == GameMode.Speed)
-        {
-            remainingText.text = $"{correctClicksRemaining} LEFT";
-        }
+        applicationPauseSignal = paused;
+        RefreshApplicationSuspension();
     }
 
-    private void CampaignLevelCompleted()
+    private void OnApplicationFocus(bool focused)
     {
-        isGameActive = false;
-        isGameplayTransitionLocked = false;
-        if (feedbackController != null) feedbackController.ResetImmediate();
-        successPanel.SetActive(true);
-        successLevelText.text = $"LEVEL {activeLevel.levelNumber} COMPLETE";
-
-        // Save progress
-        int currentSaved = GetSavedCampaignLevelIndex();
-        int nextUnlockedLevel = Mathf.Min(currentLevelIndex + 1, levels.Count - 1);
-        if (nextUnlockedLevel > currentSaved)
-        {
-            PlayerPrefs.SetInt("CampaignLevel", nextUnlockedLevel);
-            PlayerPrefs.Save();
-        }
-
-        // Re-wire Next button dynamically
-        successNextButton.onClick.RemoveAllListeners();
-        successNextButton.GetComponentInChildren<TMP_Text>().text = "NEXT LEVEL";
-        
-        if (levels != null && currentLevelIndex < levels.Count - 1)
-        {
-            successNextButton.gameObject.SetActive(true);
-            successNextButton.onClick.AddListener(() => StartLevel(currentLevelIndex + 1));
-        }
-        else
-        {
-            successNextButton.gameObject.SetActive(false); // Loop or end reached
-        }
+        applicationFocusLost = !focused;
+        RefreshApplicationSuspension();
     }
 
-    private void TimedModeCompleted()
+    private void RefreshApplicationSuspension()
     {
-        isGameActive = false;
-        isGameplayTransitionLocked = false;
-        if (feedbackController != null) feedbackController.ResetImmediate();
-        successPanel.SetActive(true);
-
-        int best = PlayerPrefs.GetInt("TimedHighScore", 0);
-        bool isNewBest = scoreCount > best;
-        if (isNewBest)
-        {
-            PlayerPrefs.SetInt("TimedHighScore", scoreCount);
-            PlayerPrefs.Save();
-            best = scoreCount;
-        }
-
-        successLevelText.text = isNewBest ? $"NEW BEST SCORE!\nSCORE: {scoreCount}" : $"TIMED COMPLETED\nSCORE: {scoreCount}\nBEST: {best}";
-
-        // Configure "Play Again" button instead of next level
-        successNextButton.gameObject.SetActive(true);
-        successNextButton.onClick.RemoveAllListeners();
-        successNextButton.GetComponentInChildren<TMP_Text>().text = "PLAY AGAIN";
-        successNextButton.onClick.AddListener(StartTimedMode);
-    }
-
-    private void SpeedModeCompleted()
-    {
-        isGameActive = false;
-        isGameplayTransitionLocked = false;
-        if (feedbackController != null) feedbackController.ResetImmediate();
-        successPanel.SetActive(true);
-
-        float best = PlayerPrefs.GetFloat("SpeedBestTime", 9999f);
-        bool isNewBest = levelTimer < best;
-        if (isNewBest)
-        {
-            PlayerPrefs.SetFloat("SpeedBestTime", levelTimer);
-            PlayerPrefs.Save();
-            best = levelTimer;
-        }
-
-        successLevelText.text = isNewBest ? $"NEW BEST TIME!\nTIME: {levelTimer:F2}s" : $"SPEED COMPLETED\nTIME: {levelTimer:F2}s\nBEST: {best:F2}s";
-
-        // Configure "Play Again" button
-        successNextButton.gameObject.SetActive(true);
-        successNextButton.onClick.RemoveAllListeners();
-        successNextButton.GetComponentInChildren<TMP_Text>().text = "PLAY AGAIN";
-        successNextButton.onClick.AddListener(StartSpeedMode);
-    }
-
-    private void LevelFailed(string reason)
-    {
-        isGameActive = false;
-        isGameplayTransitionLocked = false;
-        if (feedbackController != null) feedbackController.ResetImmediate();
-        failPanel.SetActive(true);
-        failLevelText.text = "LEVEL FAILED";
-        failReasonText.text = reason;
-    }
-
-    // Called from button bindings
-    public void StartLevel(int levelIndex)
-    {
-        if (levels == null || levels.Count == 0)
-        {
-            Debug.LogError("Cannot start a campaign level because no levels are configured.");
+        bool suspended = applicationPauseSignal || applicationFocusLost;
+        if (applicationSuspended == suspended)
             return;
-        }
-
-        activeMode = GameMode.Campaign;
-        currentLevelIndex = Mathf.Clamp(levelIndex, 0, levels.Count - 1);
-        StartActiveSetup();
-    }
-
-    public void RestartLevel()
-    {
-        if (activeMode == GameMode.Campaign) StartLevel(currentLevelIndex);
-        else if (activeMode == GameMode.Timed) StartTimedMode();
-        else if (activeMode == GameMode.Speed) StartSpeedMode();
-    }
-
-    private int GetSavedCampaignLevelIndex()
-    {
-        if (levels == null || levels.Count == 0) return 0;
-
-        int savedIndex = PlayerPrefs.GetInt("CampaignLevel", 0);
-        int validIndex = Mathf.Clamp(savedIndex, 0, levels.Count - 1);
-
-        // Migrate stale progress left by older builds that allowed the value to
-        // grow beyond the configured level list and then wrapped with modulo.
-        if (savedIndex != validIndex)
+        applicationSuspended = suspended;
+        feedbackController?.SetPresentationPaused(suspended || state == FlowState.Settings);
+        SetSquareAnimationsPaused(suspended || state == FlowState.Settings);
+        if (suspended)
         {
-            PlayerPrefs.SetInt("CampaignLevel", validIndex);
-            PlayerPrefs.Save();
+            if (saveDirty)
+                SaveEnvelopeCritical();
+            else
+                SaveRealRunCritical();
         }
-
-        return validIndex;
     }
 
-    public void ReturnToMainMenu()
+    private void OnApplicationQuit()
     {
-        ShowMainMenu();
+        if (saveDirty)
+            SaveEnvelopeCritical();
+        else if (HasRealRun)
+            SaveRealRunCritical();
     }
 
-    public void OpenSettings()
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+    public void StartDebugLevel(int levelIndex)
     {
-        settingsPanel.SetActive(true);
+        if (campaign == null || campaign.LevelCount == 0)
+            return;
+        int safeIndex = Mathf.Clamp(levelIndex, 0, campaign.LevelCount - 1);
+        UpgradeSnapshotData snapshot = UpgradeCatalog.CaptureSnapshot(gameConfig, saveData.profile);
+        int seed = unchecked((int)0x4E524658) ^ (safeIndex + 1) * 397;
+        random = new DeterministicRandom(seed);
+        sessionRun = new ActiveRunData
+        {
+            runId = "debug-sandbox",
+            runSaveVersion = gameConfig.saveVersion,
+            runSeed = seed,
+            randomState = NeonSaveService.EncodeRandomState(random.State),
+            currentLevelIndex = safeIndex,
+            currentLevelId = campaign.GetLevel(safeIndex).stableId,
+            currentHealth = snapshot.maxHealth,
+            currentReserveSeconds = snapshot.startingReserveSeconds,
+            pendingCoins = 0L,
+            levelsCompleted = 0,
+            betweenLevels = false,
+            upgrades = snapshot
+        };
+        isDebugSession = true;
+        terminalRequested = false;
+        InitializeCurrentLevelState();
+        EnterCurrentLevel(true, false);
     }
-
-    public void CloseSettings()
-    {
-        settingsPanel.SetActive(false);
-    }
+#endif
 }

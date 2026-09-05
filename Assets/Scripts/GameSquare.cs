@@ -23,6 +23,12 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     private float smallScale = 0.4f;
     private float mediumScale = 0.7f;
     private float fullScale = 1.0f;
+    private bool animationsPaused;
+
+    public void SetAnimationsPaused(bool paused)
+    {
+        animationsPaused = paused;
+    }
 
     public void Setup(int x, int y, Sprite solidSprite, Sprite outlineSprite, Color cellColor, Color outlineColor, float small, float medium, float full)
     {
@@ -115,7 +121,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
 
         while (elapsed < duration)
         {
-            elapsed += Time.deltaTime;
+            if (!animationsPaused) elapsed += Time.deltaTime;
             float t = elapsed / duration;
             // Use smooth ease out for growing effect
             float tSmooth = Mathf.Sin(t * Mathf.PI * 0.5f);
@@ -150,7 +156,12 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
 
     private IEnumerator AnimateAttentionPulse(LitSize expectedSize, float delay)
     {
-        if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+        float delayElapsed = 0f;
+        while (delayElapsed < delay)
+        {
+            if (!animationsPaused) delayElapsed += Time.unscaledDeltaTime;
+            yield return null;
+        }
         if (currentLitSize != expectedSize || currentLitSize == LitSize.None)
         {
             attentionCoroutine = null;
@@ -172,7 +183,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         outlineImage.gameObject.SetActive(true);
         while (elapsed < growDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            if (!animationsPaused) elapsed += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(elapsed / growDuration);
             outlineImage.transform.localScale = Vector3.one * Mathf.Lerp(baseScale, peakScale, Mathf.Sin(t * Mathf.PI * 0.5f));
             yield return null;
@@ -181,7 +192,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         elapsed = 0f;
         while (elapsed < settleDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            if (!animationsPaused) elapsed += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(elapsed / settleDuration);
             outlineImage.transform.localScale = Vector3.one * Mathf.Lerp(peakScale, baseScale, t * t);
             yield return null;

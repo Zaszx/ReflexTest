@@ -31,6 +31,28 @@ public class GameplayFeedbackController : MonoBehaviour
     private Coroutine badgePulseCoroutine;
     private Coroutine badgeReactionCoroutine;
     private Coroutine badgeMistakeCoroutine;
+    private bool presentationPaused;
+
+    private float PresentationDelta => presentationPaused ? 0f : Time.unscaledDeltaTime;
+
+    public void SetPresentationPaused(bool paused)
+    {
+        presentationPaused = paused;
+    }
+
+    public void RestoreReverseActive()
+    {
+        if (visualRoot == null) return;
+        StopPresentationCoroutines();
+        visualRoot.gameObject.SetActive(true);
+        dimOverlay.gameObject.SetActive(false);
+        announcementRect.gameObject.SetActive(false);
+        badgeRect.gameObject.SetActive(true);
+        badgeRect.anchoredPosition = badgeBasePosition;
+        badgeRect.localScale = Vector3.one;
+        badgeGroup.alpha = 1f;
+        badgePulseCoroutine = StartCoroutine(BadgePulseRoutine());
+    }
 
     public void Initialize(RectTransform gameplayRoot)
     {
@@ -64,10 +86,10 @@ public class GameplayFeedbackController : MonoBehaviour
         instructionText.characterSpacing = 5f;
 
         badgeRect = CreateRect("ReverseBadge", visualRoot);
-        badgeRect.anchorMin = new Vector2(0.5f, 0.855f);
-        badgeRect.anchorMax = new Vector2(0.5f, 0.855f);
+        badgeRect.anchorMin = new Vector2(0.5f, 0.735f);
+        badgeRect.anchorMax = new Vector2(0.5f, 0.735f);
         badgeRect.pivot = new Vector2(0.5f, 0.5f);
-        badgeRect.sizeDelta = new Vector2(440f, 82f);
+        badgeRect.sizeDelta = new Vector2(380f, 70f);
         badgeRect.anchoredPosition = Vector2.zero;
         badgeBasePosition = badgeRect.anchoredPosition;
 
@@ -79,7 +101,7 @@ public class GameplayFeedbackController : MonoBehaviour
         badgeOutline.effectDistance = new Vector2(3f, -3f);
 
         badgeGroup = badgeRect.gameObject.AddComponent<CanvasGroup>();
-        badgeText = CreateText("Text", badgeRect, 48f, ReversePink);
+        badgeText = CreateText("Text", badgeRect, 40f, ReversePink);
         StretchToParent(badgeText.rectTransform);
         badgeText.fontStyle = FontStyles.Bold;
         badgeText.characterSpacing = 4f;
@@ -176,7 +198,7 @@ public class GameplayFeedbackController : MonoBehaviour
         float elapsed = 0f;
         while (elapsed < anticipationDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / anticipationDuration);
             dimOverlay.color = Color.Lerp(Color.clear, new Color(0.02f, 0f, 0.025f, 0.18f), t);
             yield return null;
@@ -190,7 +212,7 @@ public class GameplayFeedbackController : MonoBehaviour
         elapsed = 0f;
         while (elapsed < impactDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / impactDuration);
             float eased = EaseOutBack(t);
             announcementGroup.alpha = Mathf.Clamp01(t * 4f);
@@ -204,7 +226,7 @@ public class GameplayFeedbackController : MonoBehaviour
         announcementRect.localRotation = Quaternion.identity;
         if (smallestTarget != null) smallestTarget.PlayAttentionPulse();
 
-        yield return WaitUnscaled(0.22f);
+        yield return WaitPresentationTime(0.22f);
 
         Canvas.ForceUpdateCanvases();
         badgeRect.gameObject.SetActive(true);
@@ -217,7 +239,7 @@ public class GameplayFeedbackController : MonoBehaviour
         elapsed = 0f;
         while (elapsed < settleDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / settleDuration);
             float smooth = t * t * (3f - 2f * t);
             announcementRect.localPosition = Vector3.Lerp(startPosition, badgePosition, smooth);
@@ -249,7 +271,7 @@ public class GameplayFeedbackController : MonoBehaviour
         const float collapseDuration = 0.18f;
         while (elapsed < collapseDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / collapseDuration);
             float x = t < 0.35f ? Mathf.Lerp(1f, 1.14f, t / 0.35f) : Mathf.Lerp(1.14f, 0f, (t - 0.35f) / 0.65f);
             badgeRect.localScale = new Vector3(x, Mathf.Lerp(1f, 0.86f, t), 1f);
@@ -271,20 +293,20 @@ public class GameplayFeedbackController : MonoBehaviour
         const float normalInDuration = 0.12f;
         while (elapsed < normalInDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / normalInDuration);
             announcementGroup.alpha = t;
             announcementRect.localScale = Vector3.one * Mathf.Lerp(0.78f, 1f, EaseOutBack(t));
             yield return null;
         }
 
-        yield return WaitUnscaled(0.13f);
+        yield return WaitPresentationTime(0.13f);
 
         elapsed = 0f;
         const float normalOutDuration = 0.16f;
         while (elapsed < normalOutDuration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / normalOutDuration);
             announcementGroup.alpha = 1f - t;
             announcementRect.localScale = Vector3.one * Mathf.Lerp(1f, 0.92f, t);
@@ -303,7 +325,7 @@ public class GameplayFeedbackController : MonoBehaviour
         float elapsed = 0f;
         while (elapsed < duration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / duration);
             float strength = (1f - t) * (1f - t);
             Vector2 offset = UnityEngine.Random.insideUnitCircle * maxOffset * strength;
@@ -326,7 +348,7 @@ public class GameplayFeedbackController : MonoBehaviour
             const float duration = 1.25f;
             while (elapsed < duration)
             {
-                elapsed += Time.unscaledDeltaTime;
+                elapsed += PresentationDelta;
                 float pulse = (Mathf.Sin((elapsed / duration) * Mathf.PI * 2f - Mathf.PI * 0.5f) + 1f) * 0.5f;
                 badgeGroup.alpha = Mathf.Lerp(0.78f, 1f, pulse);
                 yield return null;
@@ -340,7 +362,7 @@ public class GameplayFeedbackController : MonoBehaviour
         const float duration = 0.2f;
         while (elapsed < duration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / duration);
             float scale = t < 0.4f ? Mathf.Lerp(1f, 1.12f, t / 0.4f) : Mathf.Lerp(1.12f, 1f, (t - 0.4f) / 0.6f);
             badgeRect.localScale = Vector3.one * scale;
@@ -356,7 +378,7 @@ public class GameplayFeedbackController : MonoBehaviour
         const float duration = 0.22f;
         while (elapsed < duration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             float t = Mathf.Clamp01(elapsed / duration);
             float offset = Mathf.Sin(t * Mathf.PI * 6f) * 18f * (1f - t);
             badgeRect.anchoredPosition = badgeBasePosition + Vector2.right * offset;
@@ -385,12 +407,12 @@ public class GameplayFeedbackController : MonoBehaviour
         badgeRect.localScale = Vector3.one;
     }
 
-    private static IEnumerator WaitUnscaled(float duration)
+    private IEnumerator WaitPresentationTime(float duration)
     {
         float elapsed = 0f;
         while (elapsed < duration)
         {
-            elapsed += Time.unscaledDeltaTime;
+            elapsed += PresentationDelta;
             yield return null;
         }
     }

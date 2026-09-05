@@ -1,0 +1,17 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public sealed class CampaignValidationReport
+{
+    public readonly List<string> errors = new List<string>(); public readonly List<string> warnings = new List<string>(); public bool IsValid => errors.Count == 0;
+}
+public static class CampaignValidation
+{
+    public static CampaignValidationReport Validate(CampaignDefinition campaign, float minimumTouchTargetPixels = 64f)
+    {
+        var report=new CampaignValidationReport(); if(campaign==null){report.errors.Add("Campaign is null.");return report;} if(campaign.LevelCount==0){report.errors.Add("Campaign has no levels.");return report;} if(campaign.LevelCount<100)report.errors.Add("Campaign must contain at least 100 configured levels for this release."); var ids=new HashSet<string>();var numbers=new HashSet<int>();
+        for(int i=0;i<campaign.LevelCount;i++){var level=campaign.GetLevel(i); string prefix="Level index "+i+": "; if(level==null){report.errors.Add(prefix+"missing asset.");continue;} if(string.IsNullOrEmpty(level.stableId)||!ids.Add(level.stableId))report.errors.Add(prefix+"stable ID missing or duplicated."); if(level.levelNumber<=0||!numbers.Add(level.levelNumber))report.errors.Add(prefix+"level number invalid or duplicated."); if(level.levelNumber!=i+1)report.errors.Add(prefix+"display number must match its ordered campaign position."); if(level.gridSize<2)report.errors.Add(prefix+"grid must be at least 2x2."); if(level.gridSize*level.gridSize<3)report.errors.Add(prefix+"grid needs at least three cells."); if(level.requiredCorrectClicks<=0||level.timeLimit<=0)report.errors.Add(prefix+"objective and time must be positive."); if(level.completionCoinReward<=0)report.errors.Add(prefix+"completion reward must be positive."); if(level.scaleEnabled&&(level.minimumGridScale<=0||level.maximumGridScale<level.minimumGridScale||level.scaleCycleDuration<=0))report.errors.Add(prefix+"invalid scale range/cycle."); if(level.scaleEnabled&&level.minimumGridScale<.82f)report.warnings.Add(prefix+"scale may make targets too small."); if(level.movementEnabled&&(level.movementSpeedNormalized<=0||level.movementTravelPaddingNormalized<0))report.errors.Add(prefix+"enabled movement requires positive speed and valid padding."); if(level.maximumGridScale>1.25f)report.warnings.Add(prefix+"maximum scale may leave insufficient transform travel room."); if(level.gridSize>=5&&level.scaleEnabled&&level.minimumGridScale<.9f)report.warnings.Add(prefix+"5x5 scaled grid may violate "+minimumTouchTargetPixels+"px touch target."); int expected=i+1; bool modifier=level.reverseEnabled||!Mathf.Approximately(level.rotateSpeed,0)||level.scaleEnabled||level.movementEnabled; if(expected==1&&modifier)report.errors.Add(prefix+"first level must be base only."); if(expected==2&&(!level.reverseEnabled||level.rotateSpeed!=0||level.scaleEnabled||level.movementEnabled))report.errors.Add(prefix+"second level must introduce Reverse only."); if(expected==3&&(level.reverseEnabled||Mathf.Approximately(level.rotateSpeed,0)||level.scaleEnabled||level.movementEnabled))report.errors.Add(prefix+"third level must introduce rotation only."); if(expected==4&&(level.reverseEnabled||level.rotateSpeed!=0||!level.scaleEnabled||level.movementEnabled))report.errors.Add(prefix+"fourth level must introduce scale only."); if(expected==5&&(level.reverseEnabled||level.rotateSpeed!=0||level.scaleEnabled||!level.movementEnabled))report.errors.Add(prefix+"fifth level must introduce movement only."); }
+        return report;
+    }
+}

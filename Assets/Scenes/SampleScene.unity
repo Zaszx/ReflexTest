@@ -297,7 +297,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: LEVEL 3
+  m_text: SETTINGS
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -997,7 +997,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: LEVEL 1
+  m_text: START RUN
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -1567,7 +1567,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: TRY AGAIN
+  m_text: UPGRADES
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -2305,7 +2305,7 @@ GameObject:
   - component: {fileID: 901577682}
   - component: {fileID: 901577681}
   m_Layer: 0
-  m_Name: PlayLevel1Button
+  m_Name: StartContinueButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3118,21 +3118,17 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3e986be4f94d2954ab643eb81f54a17d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GameManager
-  activeMode: 0
+  m_EditorClassIdentifier: NeonReflex.Runtime::GameManager
   gameConfig: {fileID: 11400000, guid: ba153b148ae6496a84f2f9de4786bdac, type: 2}
-  levels:
-  - {fileID: 11400000, guid: 45c2f83b12d75d848b6c78eb652f8e04, type: 2}
-  - {fileID: 11400000, guid: a1ab9c4b8d36f6642affb502e98374c1, type: 2}
-  - {fileID: 11400000, guid: ac2144db77fe2c247b629cdbaa622fd2, type: 2}
-  - {fileID: 11400000, guid: 0bafb29ac718db649bf3fae5a101ea8e, type: 2}
-  currentLevelIndex: 0
+  campaign: {fileID: 0}
   mainMenuPanel: {fileID: 2071291866}
   gameplayPanel: {fileID: 433338649}
   successPanel: {fileID: 1619680535}
   failPanel: {fileID: 1836654223}
   settingsPanel: {fileID: 1131685607}
-  levelButtons: []
+  startContinueButton: {fileID: 901577681}
+  upgradesButton: {fileID: 1576435031}
+  menuSettingsButton: {fileID: 1325969884}
   gridContainer: {fileID: 928636865}
   squarePrefab: {fileID: 5659875405743124020, guid: 775588adc48c3574a8ad37d639d265e9, type: 3}
   flashOverlay: {fileID: 872300852}
@@ -3146,7 +3142,7 @@ MonoBehaviour:
   successMenuButton: {fileID: 718811893}
   failLevelText: {fileID: 1165041888}
   failReasonText: {fileID: 215740536}
-  failRetryButton: {fileID: 1763600452}
+  failPrimaryButton: {fileID: 1763600452}
   failMenuButton: {fileID: 1958197893}
   settingsCloseButton: {fileID: 1180910623}
   sfxVolumeSlider: {fileID: 0}
@@ -3181,7 +3177,7 @@ GameObject:
   - component: {fileID: 1325969885}
   - component: {fileID: 1325969884}
   m_Layer: 0
-  m_Name: PlayLevel3Button
+  m_Name: MenuSettingsButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3484,7 +3480,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: LEVEL 2
+  m_text: UPGRADES
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -3926,7 +3922,7 @@ GameObject:
   - component: {fileID: 1576435032}
   - component: {fileID: 1576435031}
   m_Layer: 0
-  m_Name: PlayLevel2Button
+  m_Name: UpgradesButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -4655,7 +4651,7 @@ GameObject:
   - component: {fileID: 1763600450}
   - component: {fileID: 1763600452}
   m_Layer: 0
-  m_Name: RetryButton
+  m_Name: UpgradeButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

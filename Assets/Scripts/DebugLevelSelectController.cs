@@ -78,14 +78,36 @@ public class DebugLevelSelectController : MonoBehaviour
         closeRect.anchoredPosition = new Vector2(0f, -700f);
         closeButton.onClick.AddListener(Close);
 
-        RectTransform gridRect = CreateRect("LevelGrid", overlayRect);
-        SetRect(gridRect, new Vector2(800f, 1050f), new Vector2(0f, -20f));
+        GameObject viewportObject = new GameObject("LevelViewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(RectMask2D), typeof(ScrollRect));
+        viewportObject.transform.SetParent(overlayRect, false);
+        RectTransform viewportRect = viewportObject.GetComponent<RectTransform>();
+        SetRect(viewportRect, new Vector2(820f, 1050f), new Vector2(0f, -20f));
+        Image viewportImage = viewportObject.GetComponent<Image>();
+        viewportImage.color = new Color(0f, 0f, 0f, 0.01f);
+        viewportImage.raycastTarget = true;
+
+        RectTransform gridRect = CreateRect("LevelGrid", viewportRect);
+        int levelCount = levels?.Count ?? 0;
+        int rowCount = Mathf.Max(1, Mathf.CeilToInt(levelCount / 2f));
+        gridRect.anchorMin = new Vector2(0.5f, 1f);
+        gridRect.anchorMax = new Vector2(0.5f, 1f);
+        gridRect.pivot = new Vector2(0.5f, 1f);
+        gridRect.sizeDelta = new Vector2(800f, rowCount * 148f);
+        gridRect.anchoredPosition = Vector2.zero;
         GridLayoutGroup grid = gridRect.gameObject.AddComponent<GridLayoutGroup>();
         grid.cellSize = new Vector2(375f, 120f);
         grid.spacing = new Vector2(28f, 28f);
         grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
         grid.constraintCount = 2;
         grid.childAlignment = TextAnchor.UpperCenter;
+
+        ScrollRect scroll = viewportObject.GetComponent<ScrollRect>();
+        scroll.viewport = viewportRect;
+        scroll.content = gridRect;
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 45f;
 
         if (levels == null || levels.Count == 0)
         {
@@ -98,9 +120,10 @@ public class DebugLevelSelectController : MonoBehaviour
         {
             int capturedIndex = i;
             LevelData level = levels[i];
+            string modifiers = level == null ? string.Empty : GetModifierLabel(level);
             string label = level == null
                 ? $"MISSING LEVEL\nINDEX {i}"
-                : $"LEVEL {level.levelNumber}\n<size=24>{level.gridSize}x{level.gridSize}  •  {level.timeLimit:0}s</size>";
+                : $"LEVEL {level.levelNumber}\n<size=22>{level.gridSize}x{level.gridSize} • {level.timeLimit:0}s • {modifiers}</size>";
 
             Button levelButton = CreateButton($"Level_{i + 1}", gridRect, label, new Color(0.07f, 0.075f, 0.13f, 1f));
             levelButton.interactable = level != null;
@@ -110,6 +133,16 @@ public class DebugLevelSelectController : MonoBehaviour
             outline.effectColor = level != null ? level.outlineColor : Color.gray;
             outline.effectDistance = new Vector2(3f, -3f);
         }
+    }
+
+    private static string GetModifierLabel(LevelData level)
+    {
+        List<string> labels = new List<string>();
+        if (level.reverseEnabled) labels.Add("REV");
+        if (!Mathf.Approximately(level.rotateSpeed, 0f)) labels.Add("ROT");
+        if (level.scaleEnabled) labels.Add("SCALE");
+        if (level.movementEnabled) labels.Add("MOVE");
+        return labels.Count == 0 ? "BASE" : string.Join("+", labels);
     }
 
     private static Button CreateButton(string objectName, Transform parent, string label, Color backgroundColor)

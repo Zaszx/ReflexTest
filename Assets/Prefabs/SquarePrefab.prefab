@@ -163,7 +163,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b3d828aa20f3e3a42845e91858eb5406, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GameSquare
+  m_EditorClassIdentifier: NeonReflex.Runtime::GameSquare
   bgImage: {fileID: 8655416978786518030}
   outlineImage: {fileID: 1676881761563122931}
   gridX: 0
