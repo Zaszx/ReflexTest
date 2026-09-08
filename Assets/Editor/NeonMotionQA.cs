@@ -225,7 +225,11 @@ public static class NeonMotionQA
         CheckPointerSurface(gm,"Normal input");
         for(int i=0;i<8;i++)Tap(gm,true);
         Check(run.levelState.objectiveProgress==before+8 && Flow(gm)=="Playing","Eight normal pointer-downs in one frame commit all eight objectives without a presentation lock.");
-        Check(Get<TMPro.TMP_Text>(gm.GetComponent<RogueliteUIController>(),"objective").text.Contains((before+8).ToString()),"Objective text presents the latest count immediately while its progress fill eases.");
+        int shownRemaining = gm.campaign.GetLevel(run.currentLevelIndex).requiredCorrectClicks - run.levelState.objectiveProgress;
+        var objectiveLabel = Get<TMPro.TMP_Text>(gm.GetComponent<RogueliteUIController>(), "objective");
+        objectiveLabel.ForceMeshUpdate(); // GetParsedText reads the last generated mesh, not pending SetText data.
+        string displayedRemaining = System.Text.RegularExpressions.Regex.Match(objectiveLabel.GetParsedText(), @"\d+").Value;
+        Check(displayedRemaining == shownRemaining.ToString(), "Objective text presents the latest remaining count immediately while its progress fill eases.");
         CheckRoles(gm,"Normal rapid retargets");
         float timer=run.levelState.normalTimeRemaining;
         yield return new WaitForSecondsRealtime(.2f);

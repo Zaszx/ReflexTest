@@ -20,6 +20,18 @@ The isolated editor bridge accepts `{"action":"shop-capture","stage":"UpgradeRev
 
 The interface uses an optical-instrument direction: ink green surfaces, warm white typography, acid-lime actions and precise geometric outlines. Cyan identifies normal targets, violet identifies Reverse, amber identifies reserve use, and coral identifies damage. The nested title mark comes from the game's size-reading mechanic. Controls and typography are native uGUI/TMP; the geometric marks are native UI meshes.
 
+## Gameplay reference update (September 9, 2026)
+
+The gameplay screen follows the supplied portrait reference: chamfered navy panels, cyan time and target cues, an amber reserve strip, lime health segments, a static bracket around the board, a faint perspective floor, and cyan Home/magenta Pause controls. Actual health, time, reserve, pending coins, required taps and remaining Reverse taps come from the run; illustrative reference values are not hard-coded. LEFT shows remaining taps out of the level's required total, counting down during play and retaining the existing count-up during the in-place level transition. The screenshot viewer's Edit/share controls are excluded.
+
+Gameplay HUD decoration is built from native uGUI meshes in `Assets/Scripts/Roguelite/NeonGameplayGraphic.cs`. It supplies static panel, board, icon, clock, floor and segmented health visuals; callers update values and mark the graphic dirty, with no per-frame graphic update loop. `RogueliteUIController.Gameplay.cs` owns the layout and keeps the existing GameManager callbacks and HUD values. Gameplay panels use their own palette; the menu, upgrade shop and settings retain their existing builders.
+
+Grid cells use the analytic `NeonGridAntialias` shader and `NeonGridRendering` payload for coverage-aware borders and fills. The redesigned gameplay presentation does not add a CellBoundary or PrecisionCellFrame decorative path. Grid difficulty, target roles, movement, scale, rotation, Reverse behavior and hit rectangles remain authored by the existing gameplay systems.
+
+The isolated editor bridge accepts `{"action":"gameplay-capture","stage":"GameplayReview","width":720,"height":1280,"full":false}`. `NeonGameplayQA` captures normal gameplay, low health, reserve drain, a Reverse HUD fixture, maximum-value typography and a resumed run. It checks active text overflow, noninteractive decoration, and native Pause/Resume/Home/Continue navigation with resource retention. Safe-inset checks use `safeTop` and `safeBottom` in pixels. Captures are under `Artifacts/UI/GameplayFinal`; all profile writes use temporary QA storage.
+
+For this update, gameplay capture/navigation checks passed 110 assertions at 720×1280 and at 405×900 with simulated 44/24-pixel top/bottom safe insets. The 720×1280 runtime motion suite passed 72 checks and the transition suite passed 60 checks. At 401×660 the scale, rotation, movement and combined-modifier recordings each sampled 60 frames with zero target-raycast failures and verified that their expected motion advanced. These editor recordings are under `Artifacts/Motion/GameplayFinal`, `Artifacts/LevelTransition/GameplayFinal` and `Artifacts/Flicker/GameplayFinal`; they do not claim physical Android-device validation. The final normal-state preview is `Artifacts/UI/GameplayFinal/720x1280/01-normal-gameplay.png`.
+
 ## Ownership and tuning
 
 - `Assets/Resources/NeonPresentationTheme.asset` contains the shared palette, font reference, type sizes, spacing, line treatment and presentation timing. The bundled TMP font travels with the project.
@@ -105,3 +117,13 @@ A separate active Level 100 editor sample at 1080×1920 used a 2-second warmup a
 No Android device performance, APK build, platform haptic hardware or physical system-gesture behavior is claimed by the editor captures. The preset viewport tests and simulated safe areas exercise layout and bounds inside Unity.
 
 One measured touchability limit remains: at 720×1280, the configured Level 100 5×5 grid with combined modifiers and 43° rotation has a cell edge of **52.65 physical pixels at minimum scale and 61.94 pixels at maximum scale**. Both are below the configured 64-pixel target. The cells remain contained and visually discrete; the existing modifier ranges and level difficulty were retained. This is an explicit physical-device touchability validation item, not a claimed handset pass.
+
+## Run report reference update
+
+`RogueliteUIController.RunReport.cs` builds the failure report over the existing neon corridor: a fractured red square for **HEALTH DEPLETED**, an amber empty hourglass for **OUT OF TIME**, a lime banked-earnings card, paired level statistics, permanent balance, and Upgrades / Return Home buttons. The timeout report appears when both normal time and reserve are exhausted. Abandoned runs say **RUN CLOSED / RUN ABANDONED**; practice says **PRACTICE OVER / NO COINS BANKED** and retains its Return to Menu action. Campaign victory retains its existing presentation.
+
+`NeonRunReportGraphic` provides native noninteractive card and icon meshes. `NeonRunReportLayout` fits a 1080×1800 artboard uniformly inside the safe area while cropping the full-bleed background independently. Result entrances use the existing motion/reduced-effects system; action buttons remain outside noninteractive animation groups. `NeonReportTextGlow.mat` references the existing TMP distance-field shader and its glow variant for build inclusion. TMP owns each label's material instance and font atlas.
+
+Reports display `RunSummaryData` after the existing terminal transaction; the presentation never credits coins or edits the saved run. `NeonRunReportQA` exercises real isolated GameManager sessions, persisted 168-coin banking (799 → 967), repeated terminal callbacks, natural reserve expiry, native button raycasts, long numeric values, abandoned runs, and practice profile isolation. Run it through the existing command bridge with `action: run-report-capture`. Captures and checks are under `Artifacts/UI/RunReportFinal`, including health, timeout, long-value, abandoned, and practice screenshots per viewport.
+
+The final version passed **125 runtime checks at 720×1280** and **125 at 405×900 with 48 px top / 32 px bottom safe-area insets**. Both sets contain five actual Unity PNGs and text/control snapshots with no report text overflow. These are Editor layout and interaction checks, not an Android device or APK test.

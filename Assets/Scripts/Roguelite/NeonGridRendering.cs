@@ -29,7 +29,7 @@ public static class NeonGridRendering
         // Transparent raster padding lets the shader cover both sides of an
         // edge. This is mesh-only padding, not a RectTransform/hitbox change.
         // It covers minified phone/editor views and the smallest target role.
-        float padding = Mathf.Max(16f, Mathf.Max(0, width));
+        float padding = Mathf.Max(16f, Mathf.Max(0, width) * 3f);
         Vector2 extent = half + Vector2.one * padding;
         Vector4 shape = new Vector4(half.x, half.y, width, Mathf.Clamp01(cornerFraction));
         Add(mesh, rect.center, new Vector2(-extent.x, -extent.y), color, shape);
@@ -50,4 +50,3 @@ public static class NeonGridRendering
         mesh.AddVert(vertex);
     }
 }
-

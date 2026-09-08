@@ -98,6 +98,7 @@ Shader "NeonReflex/UI/Grid Coverage"
                 float2 footprint = max(fwidth(input.localPoint), .00001);
                 float2 halfSize = input.shape.xy;
                 float coverage = rectangleCoverage(input.localPoint, halfSize, footprint);
+                fixed4 color = input.color;
                 if (input.shape.z >= 0)
                 {
                     float2 inner = max(halfSize - input.shape.z, 0);
@@ -109,8 +110,30 @@ Shader "NeonReflex/UI/Grid Coverage"
                         float2 corners = saturate((abs(input.localPoint) - cornerStart) / footprint + .5);
                         coverage *= corners.x * corners.y;
                     }
+                    // The halo shares the exact target coordinates and leaves
+                    // the crisp size cue and authoritative hit geometry intact.
+                    float boundary = max(abs(input.localPoint.x) - halfSize.x, abs(input.localPoint.y) - halfSize.y);
+                    float ringDistance = max(boundary, -boundary - input.shape.z);
+                    float spread = max(input.shape.z, max(footprint.x, footprint.y) * 1.5);
+                    float halo = exp2(-2.5 * pow(max(0, ringDistance) / spread, 2)) * .22;
+                    if (input.shape.w >= .5) coverage = max(coverage, halo);
                 }
-                fixed4 color = input.color;
+                else
+                {
+                    // Shade the existing fill in one pass, without a second
+                    // cell-boundary mesh competing with the moving target.
+                    float2 edge = abs(input.localPoint) - halfSize;
+                    float cut = min(11, min(halfSize.x, halfSize.y) * .075);
+                    float distance = max(max(edge.x, edge.y), (edge.x + edge.y + cut) * .70710678);
+                    float pixel = max(fwidth(distance), .00001);
+                    coverage = saturate(.5 - distance / pixel);
+                    float rim = 1 - smoothstep(0, max(4, pixel * 1.4), -distance);
+                    float vertical = saturate(input.localPoint.y / max(1, halfSize.y) * .5 + .5);
+                    color.rgb *= lerp(.76, 1.07, vertical);
+                    color.rgb = lerp(color.rgb, fixed3(.20, .34, .42), rim * .42);
+                    float cornerLight = smoothstep(.72, .93, abs(input.localPoint.x) / max(1, halfSize.x)) * rim;
+                    color.rgb += cornerLight * fixed3(.025, .045, .055);
+                }
                 color.a *= saturate(coverage);
                 #ifdef UNITY_UI_CLIP_RECT
                 float2 mask = saturate((_ClipRect.zw - _ClipRect.xy - abs(input.mask.xy)) * input.mask.zw);

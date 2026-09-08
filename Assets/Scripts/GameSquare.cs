@@ -44,7 +44,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
 
     public static Color CellPalette(Color levelColor)
     {
-        Color result = Color.Lerp(NeonTheme.T.Surface, levelColor, .06f);
+        Color result = Color.Lerp(NeonTheme.Hex("0C202D"), levelColor, .035f);
         result.a = 1f;
         return result;
     }

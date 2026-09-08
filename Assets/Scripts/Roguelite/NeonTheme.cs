@@ -53,5 +53,5 @@ public sealed class NeonTheme : ScriptableObject
     }
     public static Color Hex(string value) { ColorUtility.TryParseHtmlString("#" + value, out Color color); return color; }
     // Keep level variety on targets, while the HUD retains fixed semantic colors.
-    public static Color LevelTarget(Color levelColor) => Color.Lerp(T.Target, levelColor, .22f);
+    public static Color LevelTarget(Color levelColor) => Color.Lerp(Hex("69F3FF"), levelColor, .14f);
 }

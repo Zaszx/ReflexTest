@@ -16,7 +16,7 @@ MonoBehaviour:
   levelNumber: 26
   gridSize: 4
   requiredCorrectClicks: 62
-  timeLimit: 29.1
+  timeLimit: 14.55
   completionCoinReward: 90
   reverseEnabled: 0
   rotateSpeed: 0

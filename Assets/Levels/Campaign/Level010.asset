@@ -14,9 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: NeonReflex.Runtime::LevelData
   stableId: neon-reflex-level-010
   levelNumber: 10
-  gridSize: 3
+  gridSize: 4
   requiredCorrectClicks: 42
-  timeLimit: 36
+  timeLimit: 18
   completionCoinReward: 42
   reverseEnabled: 1
   rotateSpeed: 30

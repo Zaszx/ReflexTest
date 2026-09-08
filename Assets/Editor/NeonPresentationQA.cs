@@ -206,6 +206,33 @@ public static class NeonPresentationQA
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
+        if (command.action == "run-report-capture")
+        {
+            yield return NeonRunReportQA.Run(gm, name => Capture(directory, name, gm), Check);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("report-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "profile-debug-tests")
+        {
+            yield return NeonProfileDebugQA.Run(gm, name => Capture(directory, name, gm), Check);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("profile-debug-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "gameplay-capture")
+        {
+            yield return NeonGameplayQA.Run(gm, name => Capture(directory, name, gm), Check);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("gameplay-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "menu-capture")
         {
             yield return NeonMenuQA.Run(gm, name => Capture(directory, name, gm), Check);
