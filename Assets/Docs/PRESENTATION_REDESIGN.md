@@ -2,6 +2,22 @@
 
 This document records the original UI redesign and its validation. The subsequent animation pass, current motion owners and separate runtime recordings are documented in [MOTION_DESIGN.md](MOTION_DESIGN.md).
 
+## Main menu reference update (September 9, 2026)
+
+The main menu follows the supplied cyberpunk reference: a full-bleed neon corridor and reflective floor, blue/pink vector wordmark, gently turning nested luminous squares, a compact banked-coin wallet, and three stacked glowing controls. Start/Continue, Upgrades and Settings keep their existing callbacks. The wallet plus opens Upgrades. An active run adds a compact level/health/reserve/pending-coins readout and the existing End Active Run action; canceling its confirmation keeps the run. Development builds retain the small Practice link.
+
+`RogueliteUIController.Menu.cs` owns layout and bindings; `NeonMenuGraphic.cs` draws the live lettering, iconography and continuous glow falloff. The existing `NeonOpticalMotion` respects Reduced Effects and application suspension. The background uses an aspect-preserving fill while interactive elements respect `NeonSafeArea`. Background artwork is `Assets/Resources/MenuArt/neon-corridor.png`; its exact built-in image-generation prompt is in [MENU_BACKGROUND_PROMPT.md](MENU_BACKGROUND_PROMPT.md). Text, buttons, coin values and the square motif are not baked into that image.
+
+The isolated editor command `{"action":"menu-capture","stage":"MenuReview","width":720,"height":1280,"full":false}` captures fresh, active and abandonment-canceled menu states. `NeonMenuQA` drives native UI raycasts for all primary controls, the wallet, Continue and cancellation. It checks saved level/progress/resources/target sequence/PRNG preservation and text overflow. The bridge supports `safeTop` and `safeBottom` pixel insets for additional viewport checks. QA uses a temporary isolated profile, not the player's save.
+
+## Upgrade shop reference update (September 8, 2026)
+
+The upgrade shop now follows the supplied neon-card reference: four chamfered navy cards, green/gold/cyan/violet category colors, large glowing vector symbols, current-to-next benefits, discrete tier segments, and separate coin-price/purchase panels. The heading and wallet are compact enough to show all four cards on a portrait phone; shorter viewports retain the existing scroll behavior. Affordable, insufficient-funds, active-run and maximum-tier states remain explicit. Values and tier counts use the configured catalog, so they need not equal illustrative numbers in the reference.
+
+`Assets/Scripts/Roguelite/RogueliteUIController.Shop.cs` owns the shop layout, palette and binding. `NeonUpgradeGraphic.cs` draws its card frames, icon sockets and symbols as native UI meshes with soft stroke layers; it has no update loop or external image dependency. Other screens retain their existing theme. Purchase callbacks still use `GameManager` and `UpgradeCatalog`, including their active-run restriction and persistence. No balance, save format or gameplay changes are part of this shop update.
+
+The isolated editor bridge accepts `{"action":"shop-capture","stage":"UpgradeReview","width":720,"height":1280,"full":false}` through `.utmp/neon-ui-command.json`. It captures affordable, purchased, unaffordable, active-run, maxed and scrolled states, checks label overflow and verifies real purchase cost/tier changes and rejection during a run. Evidence is saved under `Artifacts/UI/<stage>/<resolution>`; the player's profile is not used.
+
 The interface uses an optical-instrument direction: ink green surfaces, warm white typography, acid-lime actions and precise geometric outlines. Cyan identifies normal targets, violet identifies Reverse, amber identifies reserve use, and coral identifies damage. The nested title mark comes from the game's size-reading mechanic. Controls and typography are native uGUI/TMP; the geometric marks are native UI meshes.
 
 ## Ownership and tuning

@@ -87,6 +87,13 @@ public sealed class NeonPressFeedback : MonoBehaviour, IPointerDownHandler, IPoi
         if (label != null) origin = label.anchoredPosition;
     }
     public void OnPointerDown(PointerEventData e) { if(button != null && button.IsInteractable()) Retarget(true); }
+    // Builders can finish their icon/text layout after this component's Awake.
+    public void CaptureRestPose()
+    {
+        if (label == null) return;
+        origin = from = target = label.anchoredPosition;
+        moving = pressed = false;
+    }
     public void OnPointerUp(PointerEventData e) => Retarget(false);
     public void OnPointerExit(PointerEventData e) => Retarget(false);
     private void Retarget(bool pressed)

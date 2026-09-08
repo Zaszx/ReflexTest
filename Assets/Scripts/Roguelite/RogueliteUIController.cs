@@ -7,7 +7,7 @@ using static NeonStyle;
 
 /// <summary>The single runtime presentation builder. Serialized panel roots and the gameplay
 /// grid survive; legacy children are replaced once. All displayed state comes from GameManager.</summary>
-public sealed class RogueliteUIController : MonoBehaviour
+public sealed partial class RogueliteUIController : MonoBehaviour
 {
     private NeonTheme T => NeonTheme.T;
     private GameManager gm;
@@ -43,9 +43,11 @@ public sealed class RogueliteUIController : MonoBehaviour
     private readonly Dictionary<GameObject, NeonScreenMotion> screens = new Dictionary<GameObject, NeonScreenMotion>();
     private sealed class UpgradeView
     {
-        public TMP_Text title, description, tier, benefit, status;
+        public TMP_Text title, description, tier, benefit, status, price;
         public Button buy;
         public Image progress;
+        public readonly List<Image> segments = new List<Image>();
+        public NeonUpgradeGraphic purchaseFrame, buttonFrame;
         public Color accent;
         public NeonPurchaseMotion motion;
     }
@@ -159,29 +161,6 @@ public sealed class RogueliteUIController : MonoBehaviour
         return b;
     }
 
-    private void CreateMenu()
-    {
-        Eyebrow(menu,"A GAME OF SIZE & INSTINCT");
-        menuWallet=Txt("PermanentBalance",menu,"",26,T.pageMargin,-124,952,44,T.Muted); menuWallet.alignment=TextAlignmentOptions.MidlineRight;
-        var neon=Txt("NeonWordmark",menu,"NEON",T.displaySize,T.pageMargin,-194,910,180); neon.fontStyle=FontStyles.Bold; neon.characterSpacing=-7;
-        var reflex=Txt("ReflexWordmark",menu,"REFLEX",T.displaySize,T.pageMargin,-350,955,170,T.Primary); reflex.fontStyle=FontStyles.Bold; reflex.characterSpacing=-8;
-        Txt("Manifesto",menu,"Find the largest.\nTrust your reflex.",34,T.pageMargin,-558,670,98,T.Text).textWrappingMode=TextWrappingModes.Normal;
-        // The offset nested frames are the game's size-reading mechanic made into a mark.
-        var motif=Shape("OpticalSignature",menu,NeonShape.Kind.Reticle,T.Target,3);
-        At(motif.rectTransform,.66f,.54f,0,0,430,430); motif.rectTransform.localRotation=Quaternion.Euler(0,0,-14);
-        motif.gameObject.AddComponent<NeonOpticalMotion>();
-        var serial=Txt("CampaignLabel",menu,"CAMPAIGN\n"+gm.campaign.LevelCount+" LEVELS",24,T.pageMargin,-30,340,76,T.Muted,0,.43f); serial.characterSpacing=3;
-        menuState=Txt("RunState",menu,"",38,T.pageMargin,628,930,54,T.Text,0,0); menuState.fontStyle=FontStyles.Bold;
-        menuResources=Txt("RunResources",menu,"",27,T.pageMargin,560,930,90,T.Muted,0,0); menuResources.textWrappingMode=TextWrappingModes.Normal;
-        gm.startContinueButton=WideButton("StartContinue",menu,"START RUN",310,true);
-        gm.upgradesButton=Button("Upgrades",menu,"UPGRADES"); At((RectTransform)gm.upgradesButton.transform,.25f,0,27,222,466,108);
-        gm.menuSettingsButton=Button("Settings",menu,"SETTINGS"); At((RectTransform)gm.menuSettingsButton.transform,.75f,0,-27,222,466,108);
-        abandonButton=Button("AbandonRun",menu,"END ACTIVE RUN"); At((RectTransform)abandonButton.transform,.5f,0,0,116,560,76);
-        abandonButton.image.color=T.Background; var abandonLabel=abandonButton.GetComponentInChildren<TMP_Text>(); abandonLabel.color=T.Muted; abandonLabel.fontSize=24; abandonLabel.alignment=TextAlignmentOptions.Center;
-        abandonButton.onClick.AddListener(ShowAbandonConfirmation);
-        Txt("MenuFooter",menu,"PRECISION UNDER PRESSURE",22,T.pageMargin,54,820,30,T.Muted,0,0).characterSpacing=3;
-    }
-
     private void CreateHud()
     {
         Eyebrow(play,"CAMPAIGN",58);
@@ -233,17 +212,6 @@ public sealed class RogueliteUIController : MonoBehaviour
         gm.startContinueButton.onClick.AddListener(()=>startRequested?.Invoke());
         gm.upgradesButton.onClick.AddListener(()=>upgradesRequested?.Invoke());
         gm.menuSettingsButton.onClick.AddListener(()=>settingsRequested?.Invoke());
-    }
-    public void RefreshMenu(bool activeRun,int currentLevelNumber,long balance,long pendingAmount,ActiveRunData run=null)
-    {
-        RefreshInputLayers();
-        hasActiveRun=activeRun;pendingCoins=Math.Max(0,pendingAmount);
-        ButtonText(gm.startContinueButton,activeRun?"CONTINUE RUN":"START RUN"); abandonButton.gameObject.SetActive(activeRun);
-        menuWallet.text=$"{Math.Max(0,balance):N0}  BANKED COINS";
-        menuState.text=activeRun?$"YOUR RUN · LEVEL {Mathf.Max(1,currentLevelNumber):00}":"ONE RUN. MAKE IT COUNT.";
-        menuResources.text=activeRun && run!=null
-            ? $"{run.currentHealth}/{run.upgrades.maxHealth} health  ·  {run.currentReserveSeconds:0.0}s reserve\n{pendingCoins:N0} pending coins from completed levels"
-            : activeRun?$"{pendingCoins:N0} pending coins · Pick up where you left off.":"Begin at Level 1. Carry your health and reserve\nthrough the campaign. Every completed level pays.";
     }
     public void UpdateLevelContext(LevelData level,int count)
     {
@@ -465,77 +433,14 @@ public sealed class RogueliteUIController : MonoBehaviour
         ShowBaseScreen(gm.failPanel); v.motion.Play();
     }
 
-    private void CreateShop()
-    {
-        shopPanel=Panel("PermanentUpgrades",canvas,T.Background,true).gameObject;Fill((RectTransform)shopPanel.transform);
-        shop=Rect("SafeContent",shopPanel.transform);Fill(shop);shop.gameObject.AddComponent<NeonSafeArea>();
-        RegisterScreen(shopPanel, shop, NeonScreenMotion.Kind.Page);
-        Eyebrow(shop,"NEON REFLEX / PERMANENT UPGRADES");
-        Txt("ShopTitle",shop,"BUILD YOUR\nNEXT RUN.",80,T.pageMargin,-166,900,195).fontStyle=FontStyles.Bold;
-        wallet=Txt("BankedCoins",shop,"",30,T.pageMargin,-376,940,54,T.Primary);
-        shopNotice=Txt("ShopNotice",shop,"",27,T.pageMargin,-440,940,76,T.Muted);shopNotice.textWrappingMode=TextWrappingModes.Normal;
-        var viewport=Panel("UpgradeViewport",shop,Color.clear,true);Fill(viewport.rectTransform,T.pageMargin,240,T.pageMargin,550);
-        viewport.gameObject.AddComponent<RectMask2D>();
-        var list=Rect("UpgradeList",viewport.transform);list.anchorMin=new Vector2(0,1);list.anchorMax=new Vector2(1,1);list.pivot=new Vector2(.5f,1);list.sizeDelta=new Vector2(0,1120);list.anchoredPosition=Vector2.zero;
-        var scroll=viewport.gameObject.AddComponent<ScrollRect>();scroll.content=list;scroll.viewport=viewport.rectTransform;scroll.horizontal=false;scroll.vertical=true;scroll.movementType=ScrollRect.MovementType.Clamped;scroll.scrollSensitivity=40;
-        for(int i=0;i<4;i++)cards[(UpgradeId)i]=CreateUpgrade((UpgradeId)i,list,i);
-        shopFeedback=Txt("PurchaseFeedback",shop,"PERMANENT BENEFITS. APPLIED TO NEW RUNS.",23,T.pageMargin,220,940,54,T.Muted,0,0);
-        var back=WideButton("ShopBack",shop,"RETURN HOME",64,false);back.onClick.AddListener(()=>HideShop(true));
-    }
-    private UpgradeView CreateUpgrade(UpgradeId id,Transform parent,int index)
-    {
-        var v=new UpgradeView{accent=id==UpgradeId.MaximumHealth?T.Primary:id==UpgradeId.StartingReserve?T.Reserve:id==UpgradeId.GridStabilizer?T.Target:T.Reverse};
-        var row=Rect(id.ToString(),parent);Box(row,0,1-(index+1)*.25f,1,1-index*.25f);
-        var line=Rule("Divider",row);Box(line.rectTransform,0,1,1,1);line.rectTransform.sizeDelta=new Vector2(0,2);
-        var icon=Shape("UpgradeGlyph",row,(NeonShape.Kind)((int)NeonShape.Kind.Health+index),v.accent,3);At(icon.rectTransform,0,1,35,-61,60,60);
-        v.title=Txt("Title",row,"",34,100,-20,670,57);v.title.fontStyle=FontStyles.Bold;
-        v.tier=Txt("Tier",row,"",23,100,-76,550,35,T.Muted);
-        v.description=Txt("Description",row,"",27,100,-131,790,43,T.Muted);
-        v.benefit=Txt("Benefit",row,"",30,100,-188,540,54,v.accent);
-        v.status=Txt("Status",row,"",21,100,-242,790,32,T.Muted);
-        v.buy=Button("Purchase",row,"",false);At((RectTransform)v.buy.transform,1,1,-119,-213,236,96);
-        var bt=v.buy.GetComponentInChildren<TMP_Text>();bt.fontSize=28;bt.alignment=TextAlignmentOptions.Center;Fill(bt.rectTransform,8,0,8,0);
-        v.progress=Track("TierProgress",row,new Vector2(0,-132),70,4);
-        v.motion = row.gameObject.AddComponent<NeonPurchaseMotion>();
-        v.motion.Initialize(row, v.accent, v.tier, v.benefit, wallet, v.progress);
-        v.buy.onClick.AddListener(()=>
-        {
-            if(purchaseRequested!=null&&purchaseRequested(id))
-            { RefreshShop();v.status.text="INSTALLED / NEXT RUN UPDATED";v.status.color=v.accent;shopFeedback.text=v.title.text+" INSTALLED";shopFeedback.color=v.accent;feedbackUntil=1.8f;v.motion.PlayCommitted(); }
-        });return v;
-    }
-    public void ShowShop(GameConfig gameConfig,PlayerProfileData player,bool activeRun)
-    { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop();SetBasePanels(null);SetVisible(shopPanel,true);shopPanel.transform.SetAsLastSibling();RefreshInputLayers(); }
-    public void RefreshShop(GameConfig gameConfig,PlayerProfileData player,bool activeRun)
-    { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop(); }
-    private void RefreshShop()
-    {
-        long coins=Math.Max(0,profile?.coins??0);wallet.text=$"{coins:N0} <size=24>BANKED COINS</size>";
-        shopNotice.text=hasActiveRun?"RUN ACTIVE / Purchases paused.\nFinish or end your run to make upgrades.":"Spend completed-level earnings on a stronger start.\nEvery upgrade stays with you.";shopNotice.color=hasActiveRun?T.Reserve:T.Muted;
-        foreach(var pair in cards)
-        {
-            UpgradeId id=pair.Key;var v=pair.Value;var d=UpgradeCatalog.Get(config,id);var current=UpgradeCatalog.CurrentTier(config,profile,id);var next=UpgradeCatalog.NextTier(config,profile,id);
-            int tier=UpgradeCatalog.ClampTier(config,id,UpgradeCatalog.GetTier(profile,id));int max=d?.tiers?.Count??0;
-            v.title.text=d?.displayName??id.ToString();v.tier.text=$"TIER {tier:00} / {max:00}";
-            v.description.text=d?.description??"";
-            float value=current?.effectValue??(id==UpgradeId.MaximumHealth?config.baseHealth:id==UpgradeId.StartingReserve?config.baseStartingReserveSeconds:id==UpgradeId.GridStabilizer?1:0);
-            v.benefit.text=next==null?Effect(id,value):$"<color=#9EAFAD>{Effect(id,value)}</color>  →  {Effect(id,next.effectValue)}";
-            SetFill(v.progress,tier/(float)Mathf.Max(1,max),v.accent);
-            bool allowed=string.IsNullOrEmpty(UpgradeCatalog.DisabledReason(config,profile,id,hasActiveRun));v.buy.interactable=allowed;
-            v.buy.image.color=allowed?v.accent:T.Raised;v.buy.GetComponentInChildren<TMP_Text>().color=allowed?T.Background:T.Muted;
-            ButtonText(v.buy,next==null?"MAX TIER":hasActiveRun?"RUN ACTIVE":$"{next.cost:N0}\n<size=20>COINS / UPGRADE</size>");
-            v.status.text=next==null?"MAXIMUM BENEFIT REACHED":hasActiveRun?"AVAILABLE AFTER THIS RUN":coins<next.cost?$"{next.cost-coins:N0} MORE COINS NEEDED":"READY TO UPGRADE";
-            v.status.color=allowed?v.accent:T.Muted;
-        }
-    }
     private string Effect(UpgradeId id,float value)
     {
         switch(id){case UpgradeId.MaximumHealth:return $"{Mathf.Clamp(Mathf.RoundToInt(value),1,config.maximumHealthCap)} HP";case UpgradeId.StartingReserve:return $"{value:0.#}s";case UpgradeId.GridStabilizer:return $"{value*100:0}% speed";default:return $"+{value:0.#}s cooldown";}
     }
     void Update()
-    { if(feedbackUntil>0){feedbackUntil=Mathf.Max(0,feedbackUntil-NeonMotion.Delta());if(feedbackUntil<=0){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;}} }
+    { if(feedbackUntil>0){feedbackUntil=Mathf.Max(0,feedbackUntil-NeonMotion.Delta());if(feedbackUntil<=0){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=ShopMuted;}} }
     public void HideShop(bool notify=false)
-    { feedbackUntil=0;if(shopFeedback!=null){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;}SetVisible(shopPanel,false);RefreshInputLayers();if(notify)shopClosed?.Invoke(); }
+    { feedbackUntil=0;if(shopFeedback!=null){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=ShopMuted;}SetVisible(shopPanel,false);RefreshInputLayers();if(notify)shopClosed?.Invoke(); }
 
     private void CreateAbandonDialog()
     {

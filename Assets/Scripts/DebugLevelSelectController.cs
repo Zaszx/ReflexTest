@@ -50,10 +50,10 @@ public class DebugLevelSelectController : MonoBehaviour
     {
         Button button = Button("DebugLevelSelectButton", parent, "PRACTICE");
         At((RectTransform)button.transform, 1f, 0f, -170f, 48f, 216f, 72f);
-        button.image.color = T.Background;
+        button.image.color = Color.clear;
         TMP_Text label = button.GetComponentInChildren<TMP_Text>();
         label.fontSize = 20f;
-        label.color = T.Muted;
+        label.color = NeonTheme.Hex("7296B0");
         label.alignment = TextAlignmentOptions.MidlineRight;
         Fill(label.rectTransform, 16f, 0f, 12f, 0f);
         button.onClick.AddListener(Open);

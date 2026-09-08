@@ -206,6 +206,24 @@ public static class NeonPresentationQA
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
+        if (command.action == "menu-capture")
+        {
+            yield return NeonMenuQA.Run(gm, name => Capture(directory, name, gm), Check);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("menu-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "shop-capture")
+        {
+            yield return CaptureShopStates(gm, directory);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("shop-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "level-transition-tests" || command.action == "level-transition-capture")
         {
             yield return NeonLevelTransitionQA.Run(gm, command.stage, command.action == "level-transition-capture");
@@ -307,6 +325,66 @@ public static class NeonPresentationQA
         Status("complete", directory + "\n" + string.Join("\n", assertions));
         SessionState.EraseString(PendingKey);
         EditorApplication.isPlaying = false;
+    }
+
+    private static IEnumerator CaptureShopStates(GameManager gm, string directory)
+    {
+        var data = Get<SaveEnvelopeData>(gm, "saveData");
+        var ui = gm.GetComponent<RogueliteUIController>();
+        data.profile.coins = 1250;
+        data.profile.maximumHealthTier = 5; data.profile.startingReserveTier = 3;
+        data.profile.gridStabilizerTier = 3; data.profile.reverseResistanceTier = 1;
+        gm.OpenUpgradeShop();
+        yield return Capture(directory, "01-shop-affordable", gm);
+        var panel = Get<GameObject>(ui, "shopPanel");
+        foreach (var text in panel.GetComponentsInChildren<TMP_Text>())
+            Check(!text.isTextOverflowing, "Shop label fits: " + text.transform.parent.name + "/" + text.name);
+        Button purchase = null;
+        foreach (var button in panel.GetComponentsInChildren<Button>())
+            if (button.name == "Purchase") { purchase = button; break; }
+        long before = data.profile.coins;
+        long cost = UpgradeCatalog.NextTier(gm.gameConfig, data.profile, UpgradeId.MaximumHealth).cost;
+        Canvas.ForceUpdateCanvases();
+        var pointer = new PointerEventData(EventSystem.current) { button = PointerEventData.InputButton.Left,
+            position = RectTransformUtility.WorldToScreenPoint(null, purchase.transform.position) };
+        var hits = new List<RaycastResult>(); EventSystem.current.RaycastAll(pointer, hits);
+        bool correctTarget = hits.Count > 0 && hits[0].gameObject.GetComponentInParent<Button>() == purchase;
+        Check(correctTarget, "The visible purchase control receives the native UI raycast through its decorative frame.");
+        if (!correctTarget) throw new InvalidOperationException("Purchase control was blocked by presentation graphics.");
+        ExecuteEvents.ExecuteHierarchy(hits[0].gameObject, pointer, ExecuteEvents.pointerDownHandler);
+        ExecuteEvents.ExecuteHierarchy(hits[0].gameObject, pointer, ExecuteEvents.pointerUpHandler);
+        ExecuteEvents.ExecuteHierarchy(hits[0].gameObject, pointer, ExecuteEvents.pointerClickHandler);
+        Check(data.profile.maximumHealthTier == 6 && data.profile.coins == before - cost,
+            "Reference-style purchase commits one tier and the actual configured cost.");
+        yield return Capture(directory, "02-shop-purchased", gm);
+        data.profile.coins = 0; ui.RefreshShop(gm.gameConfig, data.profile, false);
+        Check(!purchase.interactable, "Insufficient funds disables the purchase button.");
+        yield return Capture(directory, "03-shop-unaffordable", gm);
+        data.profile.coins = 1250;
+        gm.ReturnToMainMenu(); gm.StartNewRun();
+        yield return WaitForFlow(gm, "Playing", "Shop lock fixture starts an isolated run.");
+        gm.ReturnToMainMenu(); gm.OpenUpgradeShop();
+        Check(!purchase.interactable, "An active run disables purchases with an affordable wallet.");
+        var runBefore = JsonUtility.ToJson(data.activeRun); before = data.profile.coins;
+        purchase.onClick.Invoke();
+        Check(data.profile.coins == before && JsonUtility.ToJson(data.activeRun) == runBefore,
+            "Programmatic locked-button invocation cannot spend coins or change the saved run.");
+        yield return Capture(directory, "04-shop-active-run", gm);
+        var graphicState = new List<string>();
+        foreach (var graphic in panel.GetComponentsInChildren<Graphic>())
+            graphicState.Add(graphic.transform.parent.name + "/" + graphic.name + " | cull " + graphic.canvasRenderer.cull +
+                " | alpha " + graphic.canvasRenderer.GetAlpha() + " inherited " + graphic.canvasRenderer.GetInheritedAlpha() +
+                " | color " + graphic.color + " | material " + graphic.materialForRendering.name);
+        File.WriteAllLines(Path.Combine(directory, "shop-reopen-graphics.txt"), graphicState);
+        data.activeRun = null;
+        foreach (UpgradeId id in Enum.GetValues(typeof(UpgradeId)))
+            UpgradeCatalog.SetTier(data.profile, id, UpgradeCatalog.Get(gm.gameConfig, id).tiers.Count);
+        ui.RefreshShop(gm.gameConfig, data.profile, false);
+        Check(!purchase.interactable, "A maximum-tier card disables purchasing.");
+        yield return Capture(directory, "05-shop-maxed", gm);
+        var scroll = panel.GetComponentInChildren<ScrollRect>();
+        scroll.verticalNormalizedPosition = 0;
+        yield return Capture(directory, "06-shop-scroll-end", gm);
     }
 
     private static IEnumerator ExpandedSuite(GameManager gm, string directory)
