@@ -15,7 +15,7 @@ MonoBehaviour:
   stableId: neon-reflex-level-099
   levelNumber: 99
   gridSize: 5
-  requiredCorrectClicks: 79
+  requiredCorrectClicks: 158
   timeLimit: 18.95
   completionCoinReward: 309
   reverseEnabled: 1

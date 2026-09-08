@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: NeonReflex.Runtime::LevelData
   levelNumber: 3
   gridSize: 3
-  requiredCorrectClicks: 75
+  requiredCorrectClicks: 150
   timeLimit: 35
   rotateSpeed: 15
   backgroundColor: {r: 0.02, g: 0.059, b: 0.035, a: 1}

@@ -15,7 +15,7 @@ MonoBehaviour:
   stableId: neon-reflex-level-048
   levelNumber: 48
   gridSize: 4
-  requiredCorrectClicks: 46
+  requiredCorrectClicks: 92
   timeLimit: 26.2
   completionCoinReward: 156
   reverseEnabled: 1

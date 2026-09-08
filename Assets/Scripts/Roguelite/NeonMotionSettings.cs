@@ -7,6 +7,10 @@ public sealed class NeonMotionSettings : ScriptableObject
     public enum BoundedEase { Linear, SmoothStep, OutCubic }
     public BoundedEase easing = BoundedEase.OutCubic;
 
+    [Header("In-place campaign transition")]
+    [Min(0)] public float levelTransitionDuration = 1f;
+    public BoundedEase levelTransitionEasing = BoundedEase.SmoothStep;
+
     [Header("Target roles / seconds")]
     [Min(0)] public float targetRoleDuration = .11f;
     [Min(0)] public float targetAppearDuration = .10f;
@@ -102,8 +106,13 @@ public static class NeonMotion
 
     public static float Ease(float value)
     {
+        return Ease(value, T.easing);
+    }
+
+    public static float Ease(float value, NeonMotionSettings.BoundedEase easing)
+    {
         float t = Mathf.Clamp01(value);
-        switch (T.easing)
+        switch (easing)
         {
             case NeonMotionSettings.BoundedEase.Linear: return t;
             case NeonMotionSettings.BoundedEase.SmoothStep: return t * t * (3 - 2 * t);

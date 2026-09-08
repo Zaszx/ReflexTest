@@ -13,6 +13,8 @@ MonoBehaviour:
   m_Name: NeonMotionSettings
   m_EditorClassIdentifier:
   easing: 2
+  levelTransitionDuration: 1
+  levelTransitionEasing: 1
   targetRoleDuration: 0.11
   targetAppearDuration: 0.1
   targetExitDuration: 0.09

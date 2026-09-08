@@ -15,7 +15,7 @@ MonoBehaviour:
   stableId: neon-reflex-level-015
   levelNumber: 15
   gridSize: 3
-  requiredCorrectClicks: 24
+  requiredCorrectClicks: 48
   timeLimit: 34.55
   completionCoinReward: 57
   reverseEnabled: 1

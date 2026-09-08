@@ -33,6 +33,13 @@ public sealed class RogueliteUIController : MonoBehaviour
     private ResultView successView, failView;
     private float feedbackUntil;
     private NeonHudMotion hudMotion;
+    private bool levelTransitionActive;
+    private LevelData transitionNextLevel;
+    private Color gameplayPrimary = Color.white, gameplayAccent = Color.white, transitionSourcePrimary, transitionSourceAccent;
+    private Color transitionTimerFrom, transitionTimerLabelFrom, transitionTimerFillFrom;
+    private TMP_Text transitionTitle;
+    private CanvasGroup transitionGroup;
+    private RectTransform transitionRect;
     private readonly Dictionary<GameObject, NeonScreenMotion> screens = new Dictionary<GameObject, NeonScreenMotion>();
     private sealed class UpgradeView
     {
@@ -129,8 +136,8 @@ public sealed class RogueliteUIController : MonoBehaviour
         SetVisible(gm.settingsPanel, false, onHidden);
         RefreshInputLayers();
     }
-    public void SetGameplayFeedbackPaused(bool paused) => hudMotion?.SetPaused(paused);
-    public void NormalizeGameplayFeedback() => hudMotion?.NormalizeImmediate();
+    public void SetGameplayFeedbackPaused(bool paused) { if (!levelTransitionActive || paused) hudMotion?.SetPaused(paused); }
+    public void NormalizeGameplayFeedback() { if (!levelTransitionActive) hudMotion?.NormalizeImmediate(); }
     public void SettleGameplayEntrance()
     {
         if (screens.TryGetValue(gm.gameplayPanel, out var motion)) motion.SettleVisible();
@@ -202,6 +209,14 @@ public sealed class RogueliteUIController : MonoBehaviour
         var pause=Shape("PauseGlyph",gm.settingsButton.transform,NeonShape.Kind.Pause,T.Text,5); At(pause.rectTransform,1,.5f,-50,0,36,36);
         hudMotion = play.gameObject.AddComponent<NeonHudMotion>();
         hudMotion.Initialize(healthFill, progressFill, health, objective, timerLabel, reserve, timerFill);
+        var transitionPanel = Panel("LevelTransition", play, T.Background, false);
+        transitionRect = transitionPanel.rectTransform; At(transitionRect, .5f, 1f, 0f, -555f, 620f, 92f);
+        transitionGroup = transitionPanel.gameObject.AddComponent<CanvasGroup>(); transitionGroup.alpha = 0f; transitionPanel.gameObject.SetActive(false);
+        transitionGroup.blocksRaycasts = false; transitionGroup.interactable = false;
+        transitionTitle = Txt("TransitionTitle", transitionPanel.transform, "LEVEL COMPLETE", 34, 18, 18, 584, 56, T.Primary, 0, 1);
+        transitionTitle.rectTransform.anchorMin = Vector2.zero; transitionTitle.rectTransform.anchorMax = Vector2.one;
+        transitionTitle.rectTransform.offsetMin = new Vector2(18f, 8f); transitionTitle.rectTransform.offsetMax = new Vector2(-18f, -8f);
+        transitionTitle.alignment = TextAlignmentOptions.Center; transitionTitle.fontStyle = FontStyles.Bold;
     }
 
     private Image Track(string name,Transform parent,Vector2 topLeft,float width,float height)
@@ -239,8 +254,65 @@ public sealed class RogueliteUIController : MonoBehaviour
         modifierText=string.Join(" · ",list); modifiers.text=modifierText;
         ApplyGameplayTheme(level.textPrimaryColor,level.outlineColor);
     }
+
+    public void BeginLevelTransition(int completedLevelNumber, LevelData next, int campaignCount, ActiveRunData run, bool debug, float sourceNormalTime)
+    {
+        if (next == null || run == null) return;
+        transitionNextLevel = next; levelTransitionActive = true;
+        transitionTimerFrom = gm.timerText.color; transitionTimerLabelFrom = timerLabel.color; transitionTimerFillFrom = timerFill.color;
+        hudMotion.NormalizeImmediate(); hudMotion.SetPaused(true);
+        transitionSourcePrimary = gameplayPrimary; transitionSourceAccent = gameplayAccent;
+        cachedLevel = next.levelNumber;
+        gm.levelText.text = $"{cachedLevel:00}<size=30><color=#9EAFAD> / {campaignCount}</color></size>";
+        var list = new List<string>(); if (!Mathf.Approximately(next.rotateSpeed, 0)) list.Add("ROTATE"); if (next.scaleEnabled) list.Add("SCALE"); if (next.movementEnabled) list.Add("MOVE");
+        modifierText = string.Join(" · ", list); modifiers.text = modifierText;
+        rule.text = "LARGEST OUTLINE"; rule.color = ruleRail.color = T.Target;
+        health.SetText("<mspace=22>{0}</mspace><color=#9EAFAD> / {1} HEALTH</color>", Mathf.Max(0, run.currentHealth), run.upgrades.maxHealth);
+        health.color = run.currentHealth <= 1 ? T.Danger : T.Text;
+        reserve.SetText("RESERVE  <mspace=19>{0:1}</mspace>s", Mathf.Max(0, run.currentReserveSeconds)); reserve.color = T.Reserve;
+        pending.text = debug ? "PRACTICE SESSION" : $"+{Math.Max(0, run.pendingCoins):N0} PENDING COINS";
+        displayedPending = run.pendingCoins; displayedDebug = debug;
+        debugBadge.gameObject.SetActive(debug); SetFill(progressFill, 0f, T.Primary); SetFill(healthFill, run.currentHealth / (float)Mathf.Max(1, run.upgrades.maxHealth), run.currentHealth <= 1 ? T.Danger : T.Primary);
+        hudMotion.SetState(run.currentHealth, run.upgrades.maxHealth, 0, Mathf.Max(1, next.requiredCorrectClicks), false);
+        transitionTitle.text = $"LEVEL {Mathf.Max(1, completedLevelNumber)} COMPLETE";
+        transitionGroup.alpha = 0f; transitionRect.localScale = NeonTheme.ReducedEffects ? Vector3.one : Vector3.one * .96f; transitionGroup.gameObject.SetActive(true);
+        RenderLevelTransition(0f, 0f, sourceNormalTime);
+    }
+
+    public void RenderLevelTransition(float normalizedProgress, float easedProgress)
+    { RenderLevelTransition(normalizedProgress, easedProgress, transitionDisplayedSourceTime); }
+
+    private float transitionDisplayedSourceTime;
+    private void RenderLevelTransition(float normalizedProgress, float easedProgress, float sourceTime)
+    {
+        if (!levelTransitionActive || transitionNextLevel == null) return;
+        normalizedProgress = Mathf.Clamp01(normalizedProgress); easedProgress = Mathf.Clamp01(easedProgress); transitionDisplayedSourceTime = sourceTime;
+        int required = Mathf.Max(1, transitionNextLevel.requiredCorrectClicks);
+        int shown = Mathf.Clamp(Mathf.FloorToInt(required * normalizedProgress + .0001f), 0, required);
+        objective.SetText("<mspace=20>{0}</mspace><pos=76>LEFT <color=#9EAFAD>· 0/{1}</color>", shown, required);
+        float time = Mathf.Lerp(sourceTime, transitionNextLevel.timeLimit, easedProgress);
+        timerLabel.text = "LEVEL TIME"; timerLabel.color = Color.Lerp(transitionTimerLabelFrom, T.Muted, easedProgress);
+        gm.timerText.SetText("<mspace=65>{0:1}</mspace><size=32>s</size>", Mathf.Max(0f, time));
+        gm.timerText.color = Color.Lerp(transitionTimerFrom, transitionNextLevel.timeLimit <= 5f ? T.Reserve : T.Text, easedProgress);
+        SetFill(timerFill, time / Mathf.Max(.01f, transitionNextLevel.timeLimit), Color.Lerp(transitionTimerFillFrom, T.Target, easedProgress));
+        ApplyGameplayTheme(Color.Lerp(transitionSourcePrimary, transitionNextLevel.textPrimaryColor, easedProgress), Color.Lerp(transitionSourceAccent, transitionNextLevel.outlineColor, easedProgress));
+        transitionTitle.color = Color.Lerp(NeonTheme.LevelTarget(transitionSourceAccent), NeonTheme.LevelTarget(transitionNextLevel.outlineColor), easedProgress);
+        float entrance = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, .18f, normalizedProgress));
+        float exit = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(.78f, 1f, normalizedProgress));
+        transitionGroup.alpha = entrance * (1f - exit); transitionRect.localScale = NeonTheme.ReducedEffects ? Vector3.one : Vector3.one * Mathf.Lerp(.96f, 1f, entrance) * Mathf.Lerp(1f, .98f, exit);
+    }
+
+    public void EndLevelTransition()
+    {
+        if (!levelTransitionActive) return;
+        RenderLevelTransition(1f, 1f, transitionNextLevel.timeLimit);
+        ApplyGameplayTheme(transitionNextLevel.textPrimaryColor, transitionNextLevel.outlineColor);
+        hudMotion.NormalizeImmediate(); hudMotion.SetPaused(false);
+        transitionGroup.alpha = 0f; transitionGroup.gameObject.SetActive(false); transitionNextLevel = null; levelTransitionActive = false;
+    }
     public void RefreshHud(int currentHealth,int maximumHealth,float reserveSeconds,float maximumReserveSeconds,long runPending,int progress,int required,float remaining,float timeLimit,bool reserveActive,bool reverseActive,bool debug,int reverseRemaining=0)
     {
+        if (levelTransitionActive) return;
         health.SetText("<mspace=22>{0}</mspace><color=#9EAFAD> / {1} HEALTH</color>",Mathf.Max(0,currentHealth),maximumHealth);
         health.color=currentHealth<=1?T.Danger:T.Text;
         reserve.SetText(reserveActive?"LEVEL TIME EXHAUSTED":"RESERVE  <mspace=19>{0:1}</mspace>s",Mathf.Max(0,reserveSeconds));
@@ -248,13 +320,17 @@ public sealed class RogueliteUIController : MonoBehaviour
         gm.timerText.SetText("<mspace=65>{0:1}</mspace><size=32>s</size>",Mathf.Max(0,reserveActive?reserveSeconds:remaining));
         gm.timerText.color=reserveActive?T.Reserve:remaining<=5?T.Reserve:T.Text;
         timerLabel.text=reserveActive?"RESERVE · DRAINING":"LEVEL TIME";timerLabel.color=reserveActive?T.Reserve:T.Muted;
-        objective.SetText("{0} <color=#9EAFAD>/ {1} TARGETS</color>",progress,required);
+        objective.SetText("<mspace=20>{0}</mspace><pos=76>LEFT <color=#9EAFAD>· {1}/{2}</color>",Mathf.Max(0,required-progress),progress,required);
         progressFill.color = reverseActive ? T.Reverse : T.Primary;
         SetFill(timerFill,(reserveActive?reserveSeconds:remaining)/Mathf.Max(.01f,reserveActive?maximumReserveSeconds:timeLimit),reserveActive?T.Reserve:T.Target);
         SetFill(healthFill,currentHealth/(float)Mathf.Max(1,maximumHealth),currentHealth<=1?T.Danger:T.Primary);
         rule.text=reverseActive?"REVERSE / SMALLEST":"LARGEST OUTLINE";rule.color=ruleRail.color=reverseActive?T.Reverse:T.Target;
         // The rule stays upright; this count is the real remaining Reverse sequence.
-        if (reverseActive) objective.SetText("{0} <color=#9EAFAD>/ {1} TARGETS · {2} REVERSE LEFT</color>",progress,required,reverseRemaining);
+        if (reverseActive)
+        {
+            objective.SetText("<mspace=20>{0}</mspace><pos=76>LEFT <color=#9EAFAD>· {1}/{2}</color>", Mathf.Max(0, required - progress), progress, required);
+            rule.text = $"REVERSE / SMALLEST <size=23>· {Mathf.Max(0, reverseRemaining)}</size>"; rule.color = ruleRail.color = T.Reverse;
+        }
         if(displayedPending!=runPending||displayedDebug!=debug)
         {
             pending.text=debug?"PRACTICE SESSION":$"+{Math.Max(0,runPending):N0} PENDING COINS";
@@ -265,9 +341,11 @@ public sealed class RogueliteUIController : MonoBehaviour
     }
     public void ApplyGameplayTheme(Color primary,Color accent)
     {
+        gameplayPrimary = primary; gameplayAccent = accent;
         gm.gameplayPanel.GetComponent<Image>().color=T.Background;
         if(Camera.main!=null)Camera.main.backgroundColor=T.Background;
         if(gm.levelText!=null)gm.levelText.color=T.Text;
+        if(rule!=null) { rule.color=T.Target; ruleRail.color=T.Target; }
     }
 
     private void CreateSettings()

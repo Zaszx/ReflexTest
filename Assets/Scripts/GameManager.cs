@@ -9,7 +9,7 @@ using UnityEngine.UI;
 /// Scene-facing campaign controller. Persistent data and deterministic rules
 /// live in the small testable classes under Scripts/Roguelite.
 /// </summary>
-public sealed class GameManager : MonoBehaviour
+public sealed partial class GameManager : MonoBehaviour
 {
     private enum FlowState
     {
@@ -20,6 +20,7 @@ public sealed class GameManager : MonoBehaviour
         ReverseEntrance,
         ReverseExit,
         LevelComplete,
+        LevelTransition,
         RunSummary,
         Shop,
         Settings
@@ -310,6 +311,11 @@ public sealed class GameManager : MonoBehaviour
 
     private void Update()
     {
+        if (levelTransitionActive)
+        {
+            AdvanceLevelTransition(NeonMotion.TransitionDelta());
+            return;
+        }
         if (!SimulationIsActive)
             return;
 
@@ -483,6 +489,7 @@ public sealed class GameManager : MonoBehaviour
 
     private void EnterCurrentLevel(bool showIntroduction, bool restoring)
     {
+        CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         StopDamageFlash();
         if (introCoroutine != null) { StopCoroutine(introCoroutine); introCoroutine = null; }
@@ -743,7 +750,7 @@ public sealed class GameManager : MonoBehaviour
 
     private void OnSquareClicked(GameSquare square)
     {
-        if (!SimulationIsActive || square == null)
+        if (!SimulationIsActive || square == null || Time.frameCount == transitionInputReadyFrame)
             return;
 
         int clickedIndex = square.gridY * Mathf.Max(2, activeLevel.gridSize) + square.gridX;
@@ -877,21 +884,22 @@ public sealed class GameManager : MonoBehaviour
 
     private void CompleteCurrentLevel()
     {
-        if (terminalRequested || state != FlowState.Playing)
+        if (terminalRequested || state != FlowState.Playing || sessionRun == null || activeLevel == null ||
+            sessionRun.levelState.objectiveProgress < Mathf.Max(1, activeLevel.requiredCorrectClicks))
             return;
         state = FlowState.LevelComplete;
         terminalRequested = true;
         presentationToken++;
         feedbackController.ResetImmediate();
 
-        if (isDebugSession)
+        if (isDebugSession && sessionRun.currentLevelIndex >= campaign.LevelCount - 1)
         {
             ShowDebugLevelComplete();
             return;
         }
 
         ActiveLevelStateData completedState = sessionRun.levelState;
-        if (!completedState.rewardGranted)
+        if (!isDebugSession && !completedState.rewardGranted)
         {
             completedState.rewardGranted = true;
             sessionRun.pendingCoins = RunEconomyRules.SaturatingAdd(sessionRun.pendingCoins, Math.Max(0L, activeLevel.completionCoinReward));
@@ -905,29 +913,7 @@ public sealed class GameManager : MonoBehaviour
             return;
         }
 
-        sessionRun.currentLevelIndex++;
-        LevelData nextLevel = campaign.GetLevel(sessionRun.currentLevelIndex);
-        sessionRun.currentLevelId = nextLevel.stableId;
-        sessionRun.betweenLevels = true;
-        SaveRealRunCritical();
-
-        rogueliteUI.ShowLevelComplete(sessionRun, completedLevelNumber, nextLevel.levelNumber, activeLevel.completionCoinReward);
-        ConfigureSuccessButton("NEXT LEVEL", StartNextLevelFromSummary, true);
-    }
-
-    private void StartNextLevelFromSummary()
-    {
-        if (state != FlowState.LevelComplete) return;
-        if (!HasRealRun || !saveData.activeRun.betweenLevels)
-        {
-            ShowMainMenu();
-            return;
-        }
-        sessionRun = saveData.activeRun;
-        terminalRequested = false;
-        InitializeCurrentLevelState();
-        SaveRealRunCritical();
-        EnterCurrentLevel(true, false);
+        BeginNextLevelTransition(completedLevelNumber);
     }
 
     private void ShowDebugLevelComplete()
@@ -980,6 +966,7 @@ public sealed class GameManager : MonoBehaviour
 
     private void EndRealRun(string reason, bool campaignCompleted, long completionBonus)
     {
+        CancelLevelTransitionPresentation();
         if (terminalRequested && state == FlowState.RunSummary)
             return;
         if (sessionRun == null)
@@ -1140,6 +1127,7 @@ public sealed class GameManager : MonoBehaviour
 
     public void ReturnToMainMenu()
     {
+        CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         StopDamageFlash();
         NormalizeTargetPresentation();
@@ -1165,6 +1153,7 @@ public sealed class GameManager : MonoBehaviour
 
     public void ShowMainMenu()
     {
+        CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         state = FlowState.MainMenu;
         rogueliteUI.ShowBaseScreen(mainMenuPanel);
@@ -1191,6 +1180,7 @@ public sealed class GameManager : MonoBehaviour
 
     public void OpenUpgradeShop()
     {
+        CancelLevelTransitionPresentation();
         if (state == FlowState.Shop)
         {
             rogueliteUI.ShowShop(gameConfig, saveData.profile, HasRealRun);
@@ -1249,7 +1239,8 @@ public sealed class GameManager : MonoBehaviour
         CancelSettingsDismissal();
         rogueliteUI.ShowSettings();
         rogueliteUI.RefreshSettings(stateBeforeSettings == FlowState.Playing || stateBeforeSettings == FlowState.LevelIntro ||
-            stateBeforeSettings == FlowState.ReverseEntrance || stateBeforeSettings == FlowState.ReverseExit);
+            stateBeforeSettings == FlowState.ReverseEntrance || stateBeforeSettings == FlowState.ReverseExit ||
+            stateBeforeSettings == FlowState.LevelTransition);
         feedbackController.SetPresentationPaused(true);
         SetSquareAnimationsPaused(true);
         rogueliteUI.SetHaptics(PlayerPrefs.GetInt("HapticsEnabled", 1) == 1);
@@ -1269,7 +1260,8 @@ public sealed class GameManager : MonoBehaviour
             state = stateBeforeSettings;
             rogueliteUI.RefreshInputLayers();
             feedbackController.SetPresentationPaused(applicationSuspended);
-            SetSquareAnimationsPaused(applicationSuspended);
+            SetSquareAnimationsPaused(applicationSuspended || levelTransitionActive);
+            levelTransitionResumedFrame = Time.frameCount;
             if (state == FlowState.Playing && !rogueliteUI.IsGameplayReady)
             {
                 state = FlowState.LevelIntro;
@@ -1427,7 +1419,7 @@ public sealed class GameManager : MonoBehaviour
         applicationSuspended = suspended;
         NeonMotion.SetApplicationSuspended(suspended);
         feedbackController?.SetPresentationPaused(suspended || state == FlowState.Settings);
-        SetSquareAnimationsPaused(suspended || state == FlowState.Settings);
+        SetSquareAnimationsPaused(suspended || state == FlowState.Settings || levelTransitionActive);
         if (suspended)
         {
             if (saveDirty)

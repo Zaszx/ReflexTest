@@ -90,6 +90,7 @@ public static class NeonPresentationQA
         if (EditorSceneManager.GetActiveScene().path != "Assets/Scenes/SampleScene.unity")
             EditorSceneManager.OpenScene("Assets/Scenes/SampleScene.unity", OpenSceneMode.Single);
         Status("starting", command.stage + " — isolated profile " + profileDirectory);
+        EditorApplication.isPaused = false;
         EditorApplication.isPlaying = true;
     }
 
@@ -160,21 +161,28 @@ public static class NeonPresentationQA
 
     private static IEnumerator Guard(IEnumerator routine)
     {
-        while (true)
+        var stack = new Stack<IEnumerator>();
+        stack.Push(routine);
+        while (stack.Count > 0)
         {
             object current;
             try
             {
-                if (!routine.MoveNext()) break;
-                current = routine.Current;
+                var active = stack.Peek();
+                if (!active.MoveNext()) { (stack.Pop() as IDisposable)?.Dispose(); continue; }
+                current = active.Current;
             }
             catch (Exception ex)
             {
+                while (stack.Count > 0) (stack.Pop() as IDisposable)?.Dispose();
                 Status("error", ex.ToString());
                 Debug.LogException(ex);
+                SessionState.EraseString(PendingKey);
+                EditorApplication.isPlaying = false;
                 yield break;
             }
-            yield return current;
+            if (current is IEnumerator nested && !(current is CustomYieldInstruction)) stack.Push(nested);
+            else yield return current;
         }
     }
 
@@ -198,6 +206,14 @@ public static class NeonPresentationQA
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
+        if (command.action == "level-transition-tests" || command.action == "level-transition-capture")
+        {
+            yield return NeonLevelTransitionQA.Run(gm, command.stage, command.action == "level-transition-capture");
+            Status("level-transition-complete", "Transition checks saved under Artifacts/LevelTransition/" + command.stage);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "motion" || command.action == "motion-tests")
         {
             if(command.action == "motion-tests") yield return NeonMotionQA.RunChecks(gm,command.stage);
@@ -439,18 +455,17 @@ public static class NeonPresentationQA
         run.currentReserveSeconds = 11.3f;
         Invoke(gm, "UpdateGameplayUI");
         yield return Capture(directory, "15-health-20-maximum", gm);
+        run.levelState.objectiveProgress = gm.campaign.GetLevel(run.currentLevelIndex).requiredCorrectClicks;
         Invoke(gm, "CompleteCurrentLevel");
         long earned = run.pendingCoins;
         Invoke(gm, "CompleteCurrentLevel");
         Check(run.pendingCoins == earned && run.currentHealth == 17 && Math.Abs(run.currentReserveSeconds - 11.3f) < 0.01f,
             "Level completion rewards once and carries health/reserve unchanged.");
-        yield return Capture(directory, "16-level-complete", gm);
-        gm.successNextButton.onClick.Invoke();
-        yield return new WaitForSecondsRealtime(0.55f);
-        yield return WaitForFlow(gm, "Playing", "Next-level presentation is ready before fresh-timer validation.");
         run = Get<ActiveRunData>(gm, "sessionRun");
         Check(Math.Abs(run.levelState.normalTimeRemaining - gm.campaign.GetLevel(run.currentLevelIndex).timeLimit) < 0.01f,
             "Next level receives fresh normal time; no reserve regeneration.");
+        yield return Capture(directory, "16-level-transition", gm);
+        yield return WaitForFlow(gm, "Playing", "The next level becomes playable automatically after its shared transition.");
         Invoke(gm, "FailRun", "HEALTH DEPLETED");
         yield return Capture(directory, "17-health-failure", gm);
         long banked = data.profile.coins;
@@ -477,6 +492,7 @@ public static class NeonPresentationQA
         Invoke(gm, "InitializeCurrentLevelState");
         Invoke(gm, "EnterCurrentLevel", false, false);
         yield return WaitForFlow(gm, "Playing", "Campaign final level is visible and playable before completion.");
+        run.levelState.objectiveProgress = gm.campaign.GetLevel(run.currentLevelIndex).requiredCorrectClicks;
         Invoke(gm, "CompleteCurrentLevel");
         Check(data.activeRun == null, "Campaign completion clears isolated active run after banking.");
         yield return Capture(directory, "19-campaign-complete", gm);

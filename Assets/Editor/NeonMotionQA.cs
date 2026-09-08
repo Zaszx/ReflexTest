@@ -324,11 +324,11 @@ public static class NeonMotionQA
         Check(!(bool)Invoke(gm,"TryPurchaseUpgrade",UpgradeId.MaximumHealth) && data.profile.coins==wallet,"Animation never bypasses the active-run purchase restriction.");
         run.levelState.objectiveProgress=gm.campaign.GetLevel(run.currentLevelIndex).requiredCorrectClicks-1;Tap(gm,true);
         long reward=run.pendingCoins;
-        Check(Flow(gm)=="LevelComplete" && reward>0,"Final pointer-down commits completion and reward before result choreography.");
-        Tap(gm,true);Check(run.pendingCoins==reward,"A second pointer-down during result entrance cannot pay the level reward again.");
-        gm.successNextButton.onClick.Invoke();yield return Ready(gm);
+        Check(Flow(gm)=="LevelTransition" && reward>0,"Final pointer-down commits completion, reward and the prepared next level before presentation.");
+        Tap(gm,true);Check(run.pendingCoins==reward,"A second pointer-down during the in-place transition cannot pay the reward again.");
+        yield return Ready(gm);
         Check(RunData(gm).levelState.objectiveProgress==0 && RunData(gm).pendingCoins==reward,"Next-level entry supersedes obsolete effects and retains exactly one earned reward.");
-        CheckSettled(gm,"Next level after interrupted result");
+        CheckSettled(gm,"Next level after automatic in-place transition");
         gm.ReturnToMainMenu();Invoke(gm,"ConfirmAbandonRun");wallet=data.profile.coins;
         gm.ReturnToMainMenu();gm.OpenUpgradeShop();yield return new WaitForSecondsRealtime(.3f);
         Check(data.activeRun==null && data.profile.coins==wallet,"Interrupting abandonment-result entrance retains the already banked balance and cleared run.");

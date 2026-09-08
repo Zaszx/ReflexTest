@@ -366,6 +366,47 @@ public sealed class GameSquareMotionEditModeTests
         Assert.That(lowerLarge, Is.LessThanOrEqualTo(large));
     }
 
+    [Test]
+    public void ExternalLevelPresentationRetargetsWithoutAdvanceAndPreservesHitRect()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Small);
+        RectTransform root = (RectTransform)cell.transform;
+        root.sizeDelta = new Vector2(137f, 121f); root.anchoredPosition = new Vector2(19f, -13f);
+        Vector2 sizeBefore = root.rect.size; Vector2 positionBefore = root.anchoredPosition; Quaternion rotationBefore = root.localRotation;
+        cell.BeginLevelPresentation(GameSquare.LitSize.Large, .3f, .6f, .9f);
+        Assert.That(cell.currentLitSize, Is.EqualTo(GameSquare.LitSize.Large));
+        Assert.That(cell.transform.Find("RetiringTarget").gameObject.activeSelf, Is.True);
+        float start = cell.RenderedScale;
+        cell.AdvancePresentation(10f);
+        Assert.That(cell.RenderedScale, Is.EqualTo(start), "Externally owned presentation must remain paused during ordinary stepping.");
+        cell.RenderLevelPresentation(0f);
+        Assert.That(cell.RenderedAlpha, Is.EqualTo(0f));
+        cell.RenderLevelPresentation(.5f);
+        Assert.That(cell.RenderedScale, Is.EqualTo(.9f)); Assert.That(cell.RenderedAlpha, Is.EqualTo(.5f));
+        Assert.That(cell.transform.Find("RetiringTarget").GetComponent<PrecisionCellFrame>().color.a, Is.EqualTo(.5f).Within(.0001f));
+        cell.RenderLevelPresentation(1f);
+        Assert.That(cell.RenderedAlpha, Is.EqualTo(1f));
+        Assert.That(root.rect.size, Is.EqualTo(sizeBefore)); Assert.That(root.anchoredPosition, Is.EqualTo(positionBefore)); Assert.That(root.localRotation, Is.EqualTo(rotationBefore));
+        cell.EndLevelPresentation();
+        AssertSettled(cell, .9f); Assert.That(cell.HasRetiringVisual, Is.False);
+    }
+
+    [Test]
+    public void LevelPresentationPaletteReplacementDoesNotRetainFeedbackTint()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        Color sourceFill = new Color(.08f, .11f, .19f, 1f), sourceOutline = new Color(.1f, .9f, .8f, 1f);
+        Color destinationFill = new Color(.31f, .07f, .16f, 1f), destinationOutline = new Color(1f, .25f, .12f, 1f);
+        cell.SetBasePalette(sourceFill, sourceOutline); cell.PlayTapFeedback(true); cell.AdvancePresentation(.03f);
+        cell.SetBasePalette(destinationFill, destinationOutline);
+        Assert.That(cell.bgImage.color, Is.EqualTo(destinationFill));
+        cell.BeginLevelPresentation(GameSquare.LitSize.Large, .4f, .7f, 1f);
+        cell.SetBasePalette(destinationFill, destinationOutline); cell.RenderLevelPresentation(1f); cell.EndLevelPresentation();
+        cell.SetAnimationsPaused(false);
+        cell.PlayTapFeedback(true); cell.AdvancePresentation(1f);
+        Assert.That(cell.bgImage.color, Is.EqualTo(destinationFill), "Correct feedback must decay to the newly supplied base palette.");
+    }
+
     private GameSquare Create(GameSquare.LitSize size)
     {
         GameObject root = new GameObject("MotionTestCell", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(GameSquare));

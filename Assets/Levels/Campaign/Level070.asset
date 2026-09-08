@@ -15,7 +15,7 @@ MonoBehaviour:
   stableId: neon-reflex-level-070
   levelNumber: 70
   gridSize: 5
-  requiredCorrectClicks: 60
+  requiredCorrectClicks: 120
   timeLimit: 27.3
   completionCoinReward: 222
   reverseEnabled: 1

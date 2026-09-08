@@ -31,6 +31,8 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     private float feedbackElapsed, feedbackDuration;
     private bool targetAnimating, exitActive, feedbackActive;
     private bool consumedForNextAssignment, animationsPaused;
+    private bool levelPresentationActive;
+    private float levelOutgoingScale, levelOutgoingAlpha;
 
     public float RenderedScale => renderedScale;
     public float RenderedAlpha => renderedAlpha;
@@ -39,6 +41,65 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     public bool HasRetiringVisual => exitActive;
 
     public void SetAnimationsPaused(bool paused) => animationsPaused = paused;
+
+    public static Color CellPalette(Color levelColor)
+    {
+        Color result = Color.Lerp(NeonTheme.T.Surface, levelColor, .06f);
+        result.a = 1f;
+        return result;
+    }
+
+    // The campaign flow owns this palette during its single transition timeline.
+    public void SetBasePalette(Color fill, Color outline)
+    {
+        baseCellColor = fill;
+        targetColor = outline;
+        feedbackActive = false;
+        bgImage.color = fill;
+        if (targetFrame != null)
+        {
+            Color tint = outline; tint.a = renderedAlpha;
+            targetFrame.color = tint;
+        }
+        if (levelPresentationActive && retiringFrame != null)
+        {
+            Color tint = outline; tint.a = retiringFrame.color.a;
+            retiringFrame.color = tint;
+        }
+    }
+
+    public void BeginLevelPresentation(LitSize nextRole, float small, float medium, float full)
+    {
+        levelOutgoingScale = renderedScale;
+        levelOutgoingAlpha = renderedAlpha;
+        NormalizePresentation(false);
+        targetAnimating = false;
+        levelPresentationActive = true;
+        animationsPaused = true;
+        smallScale = small; mediumScale = medium; fullScale = full;
+        currentLitSize = nextRole;
+        retiringFrame.CornerFraction = 1f;
+        retiringFrame.rectTransform.localScale = Vector3.one * levelOutgoingScale;
+        retiringFrame.LineWidth = NeonTheme.T.targetStrokeWidth / Mathf.Max(.001f, levelOutgoingScale);
+        RenderLevelPresentation(0f);
+    }
+
+    public void RenderLevelPresentation(float progress)
+    {
+        if (!levelPresentationActive) return;
+        float t = Mathf.Clamp01(progress);
+        Color outgoing = targetColor; outgoing.a = levelOutgoingAlpha * (1f - t);
+        retiringFrame.color = outgoing;
+        retiringFrame.gameObject.SetActive(levelOutgoingScale > 0f && outgoing.a > 0f);
+        RenderTarget(GetScaleValue(currentLitSize), currentLitSize == LitSize.None ? 0f : t);
+    }
+
+    public void EndLevelPresentation()
+    {
+        levelPresentationActive = false;
+        if (retiringFrame != null) retiringFrame.CornerFraction = .22f;
+        NormalizePresentation();
+    }
 
     public void Setup(int x, int y, Sprite solidSprite, Sprite outlineSprite,
         Color cellColor, Color outlineColor, float small, float medium, float full)
@@ -49,8 +110,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         mediumScale = medium;
         fullScale = full;
         currentLitSize = LitSize.None;
-        baseCellColor = Color.Lerp(NeonTheme.T.Surface, cellColor, .06f);
-        baseCellColor.a = 1f;
+        baseCellColor = CellPalette(cellColor);
         targetColor = NeonTheme.LevelTarget(outlineColor);
         targetColor.a = 1f;
         bgImage.sprite = null;
