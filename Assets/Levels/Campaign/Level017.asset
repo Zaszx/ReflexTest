@@ -15,7 +15,7 @@ MonoBehaviour:
   stableId: neon-reflex-level-017
   levelNumber: 17
   gridSize: 3
-  requiredCorrectClicks: 7
+  requiredCorrectClicks: 26
   timeLimit: 30.55
   completionCoinReward: 63
   reverseEnabled: 0
@@ -23,9 +23,9 @@ MonoBehaviour:
   scaleEnabled: 1
   minimumGridScale: 0.93
   maximumGridScale: 1
-  scaleCycleDuration: 6.3
+  scaleCycleDuration: 2.52
   movementEnabled: 1
-  movementSpeedNormalized: 0.032
+  movementSpeedNormalized: 0.085
   movementTravelPaddingNormalized: 0.03
   backgroundColor: {r: 0.043, g: 0.043, b: 0.086, a: 1}
   cellColor: {r: 0.102, g: 0.102, b: 0.18, a: 1}

@@ -1,5 +1,7 @@
 # Neon Reflex presentation
 
+This document records the original UI redesign and its validation. The subsequent animation pass, current motion owners and separate runtime recordings are documented in [MOTION_DESIGN.md](MOTION_DESIGN.md).
+
 The interface uses an optical-instrument direction: ink green surfaces, warm white typography, acid-lime actions and precise geometric outlines. Cyan identifies normal targets, violet identifies Reverse, amber identifies reserve use, and coral identifies damage. The nested title mark comes from the game's size-reading mechanic. Controls and typography are native uGUI/TMP; the geometric marks are native UI meshes.
 
 ## Ownership and tuning

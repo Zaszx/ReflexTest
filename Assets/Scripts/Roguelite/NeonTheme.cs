@@ -27,8 +27,6 @@ public sealed class NeonTheme : ScriptableObject
     public float targetStrokeWidth = 6;
     [Range(0,1)] public float cellBoundaryOpacity = .18f;
     public float controlHeight = 112;
-    public float pressDuration = .10f;
-    public float enterDuration = .20f;
     private static NeonTheme instance;
     public static NeonTheme T
     {

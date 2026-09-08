@@ -27,7 +27,7 @@ public class GameplayFeedbackController : MonoBehaviour
     private bool presentationPaused;
     private int transitionVersion;
 
-    private float PresentationDelta => presentationPaused ? 0f : Time.unscaledDeltaTime;
+    private float PresentationDelta => NeonMotion.TransitionDelta(presentationPaused);
 
     public void SetPresentationPaused(bool paused)
     {
@@ -146,23 +146,23 @@ public class GameplayFeedbackController : MonoBehaviour
         // Use one continuous timeline so phase boundaries cannot accumulate
         // extra frame delays. Reduced effects preserves the exact same window.
         float duration = reverse ? ReverseEntranceDuration : ReverseExitDuration;
-        float inDuration = reverse ? 0.14f : 0.12f;
-        float outDuration = reverse ? 0.18f : 0.16f;
+        float inDuration = Mathf.Clamp(NeonMotion.T.reverseEnterFade, 0, duration * .4f);
+        float outDuration = Mathf.Clamp(NeonMotion.T.reverseExitFade, 0, duration * .4f);
         float elapsed = 0f;
         bool hapticTriggered = false;
         while (elapsed < duration)
         {
             elapsed += PresentationDelta;
-            float enter = Mathf.Clamp01(elapsed / inDuration);
-            float leave = Mathf.Clamp01((elapsed - (duration - outDuration)) / outDuration);
-            float alpha = Smooth(enter) * (1f - Smooth(leave));
+            float enter = inDuration <= 0 ? 1 : Mathf.Clamp01(elapsed / inDuration);
+            float leave = outDuration <= 0 ? (elapsed >= duration ? 1 : 0) : Mathf.Clamp01((elapsed - (duration - outDuration)) / outDuration);
+            float alpha = NeonMotion.Ease(enter) * (1f - NeonMotion.Ease(leave));
             announcementGroup.alpha = alpha;
             Color dim = NeonTheme.T.Background;
             dim.a = alpha * (NeonTheme.ReducedEffects ? 0.46f : 0.62f);
             dimOverlay.color = dim;
             announcementRect.anchoredPosition = NeonTheme.ReducedEffects
                 ? Vector2.zero
-                : new Vector2(0f, Mathf.Lerp(16f, 0f, Smooth(enter)) - leave * 8f);
+                : new Vector2(0f, Mathf.Lerp(NeonMotion.T.ruleTravel, 0f, NeonMotion.Ease(enter)) - leave * NeonMotion.T.ruleTravel * .5f);
             if (reverse && !hapticTriggered && elapsed >= 0.08f)
             {
                 hapticTriggered = true;
@@ -193,8 +193,6 @@ public class GameplayFeedbackController : MonoBehaviour
     {
         ResetImmediate();
     }
-
-    private static float Smooth(float t) => t * t * (3f - 2f * t);
 
     private static RectTransform CreateRect(string name, Transform parent)
     {

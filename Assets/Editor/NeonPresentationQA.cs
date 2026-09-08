@@ -28,6 +28,7 @@ public static class NeonPresentationQA
         public int safeTop;
         public int safeBottom;
         public string previewState = "menu";
+        public string clips;
     }
 
     private const string PendingKey = "NeonReflex.PresentationQA.Pending";
@@ -116,7 +117,7 @@ public static class NeonPresentationQA
             return;
         }
         if (!test.FullName.Contains("LegacyProgressMigrationRunsOnceAndPreservesHaptics") &&
-            (test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal)))
+            (test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonMotion", StringComparison.Ordinal) || test.FullName.StartsWith("NeonHudMotion", StringComparison.Ordinal) || test.FullName.StartsWith("GameSquareMotionEditModeTests.", StringComparison.Ordinal)))
             names.Add(test.FullName);
     }
 
@@ -190,12 +191,37 @@ public static class NeonPresentationQA
         NeonSaveService service = Get<NeonSaveService>(gm, "saveService");
         if (service.DirectoryPath != NeonPresentationQAProfile.DirectoryPath)
             throw new InvalidOperationException("GameManager did not use the isolated QA profile; QA aborted.");
+        // The automated editor can begin play while Codex holds OS focus.
+        // Model a foreground session before recording any animated menu.
+        Invoke(gm,"OnApplicationFocus",true);
         assertions.Clear();
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
-        if (command.action == "performance")
+        if (command.action == "motion" || command.action == "motion-tests")
         {
+            if(command.action == "motion-tests") yield return NeonMotionQA.RunChecks(gm,command.stage);
+            else yield return NeonMotionQA.Run(gm, command.stage,command.full,command.clips);
+            Status("motion-complete", "Motion frames and timestamps saved under Artifacts/Motion/" + command.stage);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "flicker")
+        {
+            yield return NeonFlickerQA.Run(gm, command.stage);
+            Status("flicker-complete", "Flicker captures and subpixel probe saved under Artifacts/Flicker/.");
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "performance" || command.action == "motion-performance")
+        {
+            if(command.action == "motion-performance")
+            {
+                directory=Path.Combine(ProjectRoot,"Artifacts","Motion","Performance",command.width+"x"+command.height);
+                Directory.CreateDirectory(directory);
+            }
             yield return MeasureEditorFrames(gm, directory);
             SessionState.EraseString(PendingKey);
             EditorApplication.isPlaying = false;
@@ -248,10 +274,12 @@ public static class NeonPresentationQA
         gm.OpenSettings();
         yield return Capture(directory, "03-settings", gm);
         gm.CloseSettings();
+        yield return WaitForFlow(gm, "MainMenu", "Settings dismissal returns to the menu before a new run starts.");
         gm.StartNewRun();
         Invoke(gm, "OnApplicationFocus", true);
         yield return new WaitForSecondsRealtime(0.65f);
         gm.enabled = false;
+        yield return WaitForFlow(gm, "Playing", "Initial gameplay is ready before the normal-state capture.");
         yield return Capture(directory, "04-normal-gameplay", gm);
         ActiveRunData run = Get<ActiveRunData>(gm, "sessionRun");
         Check(run.currentLevelIndex == 0 && run.currentHealth == gm.gameConfig.baseHealth, "New run starts Level 1 with configured base health.");
@@ -278,7 +306,15 @@ public static class NeonPresentationQA
             Invoke(gm, "CompletePresentation", expected, Get<int>(gm, "presentationToken"));
             Check(Get<object>(gm, "state").ToString() == "Settings" && run.levelState.normalTimeRemaining == boundaryTimer,
                 transition + " final-frame completion preserves Settings and frozen timer.");
+            // The exit is now asynchronous. Exercise its actual window instead
+            // of assuming CloseSettings changes the authoritative flow inline.
+            yield return WaitForScreen(gm.settingsPanel, "Settings entrance reaches its visible state.");
             gm.CloseSettings();
+            NeonScreenMotion settingsMotion = gm.settingsPanel.GetComponent<NeonScreenMotion>();
+            Check(!settingsMotion.IsAnimating || (Get<object>(gm, "state").ToString() == "Settings" &&
+                  run.levelState.normalTimeRemaining == boundaryTimer),
+                transition + " Settings dismissal keeps gameplay paused while its modal is leaving.");
+            yield return WaitForFlow(gm, "Playing", transition + " asynchronous Settings dismissal finishes.");
             Check(Get<object>(gm, "state").ToString() == "Playing", transition + " final-frame pause resumes to playable state.");
         }
         var outsideHits = new List<RaycastResult>();
@@ -327,6 +363,7 @@ public static class NeonPresentationQA
         Check(run.currentHealth == pausedHealth && run.levelState.normalTimeRemaining == pausedTime, "Settings pause rejects square input and freezes normal timer.");
         yield return Capture(directory, "05-settings-over-gameplay", gm);
         gm.CloseSettings();
+        yield return WaitForFlow(gm, "Playing", "Damage-time Settings dismissal restores gameplay before further state checks.");
         run.currentHealth = 1;
         Invoke(gm, "UpdateGameplayUI");
         yield return Capture(directory, "06-low-health", gm);
@@ -363,6 +400,7 @@ public static class NeonPresentationQA
         Check(restored.activeRun != null && restored.activeRun.runId == run.runId && restored.activeRun.currentHealth == run.currentHealth &&
               restored.activeRun.levelState.largeIndex == run.levelState.largeIndex && restored.activeRun.levelState.rotationAngle == run.levelState.rotationAngle,
             "Isolated save reload preserves active run identity, resources, targets, and transforms.");
+        yield return WaitForFlow(gm, "Playing", "Continue reaches visible gameplay before the application-pause check.");
         Invoke(gm, "OnApplicationPause", true);
         gm.enabled = true;
         float pausedReserve = run.currentReserveSeconds;
@@ -395,6 +433,7 @@ public static class NeonPresentationQA
         gm.ReturnToMainMenu();
         gm.StartNewRun();
         yield return new WaitForSecondsRealtime(0.6f);
+        yield return WaitForFlow(gm, "Playing", "Upgraded run entrance is complete before level-completion checks.");
         run = Get<ActiveRunData>(gm, "sessionRun");
         run.currentHealth = 17;
         run.currentReserveSeconds = 11.3f;
@@ -408,6 +447,7 @@ public static class NeonPresentationQA
         yield return Capture(directory, "16-level-complete", gm);
         gm.successNextButton.onClick.Invoke();
         yield return new WaitForSecondsRealtime(0.55f);
+        yield return WaitForFlow(gm, "Playing", "Next-level presentation is ready before fresh-timer validation.");
         run = Get<ActiveRunData>(gm, "sessionRun");
         Check(Math.Abs(run.levelState.normalTimeRemaining - gm.campaign.GetLevel(run.currentLevelIndex).timeLimit) < 0.01f,
             "Next level receives fresh normal time; no reserve regeneration.");
@@ -421,11 +461,13 @@ public static class NeonPresentationQA
         gm.ReturnToMainMenu();
         gm.StartNewRun();
         yield return new WaitForSecondsRealtime(0.55f);
+        yield return WaitForFlow(gm, "Playing", "Reserve-failure fixture enters gameplay before its terminal action.");
         Invoke(gm, "FailRun", "RESERVE DEPLETED");
         yield return Capture(directory, "18-reserve-failure", gm);
         gm.ReturnToMainMenu();
         gm.StartNewRun();
         yield return new WaitForSecondsRealtime(0.55f);
+        yield return WaitForFlow(gm, "Playing", "Campaign-completion fixture starts from ready gameplay.");
         run = Get<ActiveRunData>(gm, "sessionRun");
         run.currentLevelIndex = gm.campaign.LevelCount - 1;
         run.currentLevelId = gm.campaign.GetLevel(run.currentLevelIndex).stableId;
@@ -434,6 +476,7 @@ public static class NeonPresentationQA
         for (int i = 0; i < run.currentLevelIndex; i++) run.pendingCoins += gm.campaign.GetLevel(i).completionCoinReward;
         Invoke(gm, "InitializeCurrentLevelState");
         Invoke(gm, "EnterCurrentLevel", false, false);
+        yield return WaitForFlow(gm, "Playing", "Campaign final level is visible and playable before completion.");
         Invoke(gm, "CompleteCurrentLevel");
         Check(data.activeRun == null, "Campaign completion clears isolated active run after banking.");
         yield return Capture(directory, "19-campaign-complete", gm);
@@ -447,6 +490,7 @@ public static class NeonPresentationQA
         string realData = JsonUtility.ToJson(data);
         gm.StartDebugLevel(denseIndex);
         yield return new WaitForSecondsRealtime(0.55f);
+        yield return WaitForFlow(gm, "Playing", "Combined-modifier sandbox reaches ready gameplay.");
         run = Get<ActiveRunData>(gm, "sessionRun");
         run.levelState.rotationAngle = 43f;
         run.levelState.scalePhase = 0f;
@@ -488,6 +532,7 @@ public static class NeonPresentationQA
         yield return new WaitForSecondsRealtime(0.15f);
         gm.enabled = false;
         gm.CloseSettings();
+        yield return WaitForFlow(gm, "Playing", "Viewport-resize Settings dismissal completes before Reverse begins.");
         run.levelState.reverseActive = false;
         run.levelState.reverseCooldownRemaining = 0;
         gm.GetComponent<GameplayFeedbackController>().ResetImmediate();
@@ -504,6 +549,7 @@ public static class NeonPresentationQA
         yield return new WaitForSecondsRealtime(0.2f);
         Check(Get<object>(gm, "state").ToString() == "Settings", "Settings preserves the paused Reverse transition.");
         gm.CloseSettings();
+        yield return WaitForFlow(gm, "ReverseEntrance", "Settings dismissal restores the still-active Reverse entrance.");
         yield return Capture(directory, "24-reverse-entrance", gm);
         yield return new WaitForSecondsRealtime(0.85f);
         Check(Get<object>(gm, "state").ToString() == "Playing" && run.levelState.reverseActive,
@@ -592,11 +638,52 @@ public static class NeonPresentationQA
         Status("performance-complete", string.Join("\n", report));
     }
 
+    private static IEnumerator WaitForFlow(GameManager gm, string expected, string description)
+    {
+        float deadline = Time.realtimeSinceStartup + 3f;
+        while (Get<object>(gm, "state").ToString() != expected && Time.realtimeSinceStartup < deadline)
+            yield return null;
+        Check(Get<object>(gm, "state").ToString() == expected,
+            description + " (Expected " + expected + "; observed " + Get<object>(gm, "state") + ".)");
+    }
+
+    private static IEnumerator WaitForScreen(GameObject panel, string description)
+    {
+        NeonScreenMotion motion = panel.GetComponent<NeonScreenMotion>();
+        float deadline = Time.realtimeSinceStartup + 3f;
+        while (motion != null && !motion.IsReady && Time.realtimeSinceStartup < deadline)
+            yield return null;
+        Check(motion != null && motion.IsReady, description);
+    }
+
+    private static IEnumerator WaitForCapturePresentation(string name)
+    {
+        // Panel fades and decorative result rows have different durations.
+        // Observe their owners, while leaving the intentionally transient
+        // Reverse announcement and the target feedback on their own timelines.
+        NeonScreenMotion[] panels = UnityEngine.Object.FindObjectsByType<NeonScreenMotion>(FindObjectsSortMode.None);
+        NeonResultMotion[] results = UnityEngine.Object.FindObjectsByType<NeonResultMotion>(FindObjectsSortMode.None);
+        float deadline = Time.realtimeSinceStartup + 3f;
+        bool pending;
+        do
+        {
+            pending = false;
+            foreach (NeonScreenMotion panel in panels)
+                pending |= panel != null && panel.gameObject.activeInHierarchy && panel.IsAnimating;
+            foreach (NeonResultMotion result in results)
+                pending |= result != null && result.gameObject.activeInHierarchy && Get<bool>(result, "playing");
+            if (!pending) break;
+            yield return null;
+        } while (Time.realtimeSinceStartup < deadline);
+        Check(!pending, name + " capture waits for screen and result presentation readiness.");
+    }
+
     private static IEnumerator Capture(string directory, string name, GameManager gm)
     {
         Canvas.ForceUpdateCanvases();
         // Capture settled panel entrances; feedback has its own dedicated transient checks.
         yield return new WaitForSecondsRealtime(0.25f);
+        yield return WaitForCapturePresentation(name);
         // Unity may display cyan placeholder glyph quads while a new masked TMP
         // shader variant compiles. Wait for the editor compiler before evidence.
         PropertyInfo compiling = typeof(ShaderUtil).GetProperty("anythingCompiling", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);

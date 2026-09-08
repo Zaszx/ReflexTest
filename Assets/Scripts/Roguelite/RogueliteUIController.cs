@@ -32,20 +32,26 @@ public sealed class RogueliteUIController : MonoBehaviour
     private readonly Dictionary<UpgradeId, UpgradeView> cards = new Dictionary<UpgradeId, UpgradeView>();
     private ResultView successView, failView;
     private float feedbackUntil;
+    private NeonHudMotion hudMotion;
+    private readonly Dictionary<GameObject, NeonScreenMotion> screens = new Dictionary<GameObject, NeonScreenMotion>();
     private sealed class UpgradeView
     {
         public TMP_Text title, description, tier, benefit, status;
         public Button buy;
         public Image progress;
         public Color accent;
+        public NeonPurchaseMotion motion;
     }
     private sealed class ResultView
     {
         public TMP_Text eyebrow, title, description, amount, amountLabel, leftLabel, leftValue, rightLabel, rightValue, footer;
         public NeonShape emblem;
+        public NeonResultMotion motion;
     }
-    public bool IsShopVisible => shopPanel != null && shopPanel.activeSelf;
-    public bool IsAbandonConfirmationVisible => abandonDialog != null && abandonDialog.activeSelf;
+    public bool IsShopVisible => WantsVisible(shopPanel);
+    public bool IsAbandonConfirmationVisible => WantsVisible(abandonDialog);
+    public bool IsSettingsVisible => CoversInput(gm.settingsPanel);
+    public bool IsGameplayReady => screens.TryGetValue(gm.gameplayPanel, out var motion) && motion.IsReady;
 
     public void Initialize(GameManager manager)
     {
@@ -66,8 +72,7 @@ public sealed class RogueliteUIController : MonoBehaviour
         CreateMenu(); CreateHud(); CreateSettings();
         successView = CreateResult(success,true); failView = CreateResult(fail,false);
         CreateShop(); CreateAbandonDialog();
-        gm.mainMenuPanel.SetActive(true); gm.gameplayPanel.SetActive(false); gm.settingsPanel.SetActive(false);
-        gm.successPanel.SetActive(false); gm.failPanel.SetActive(false);
+        foreach (var motion in screens.Values) motion.SetImmediate(false);
     }
 
     private RectTransform ResetPanel(GameObject panel)
@@ -78,8 +83,57 @@ public sealed class RogueliteUIController : MonoBehaviour
         foreach(var effect in panel.GetComponents<BaseMeshEffect>()) Destroy(effect);
         Fill((RectTransform)panel.transform);
         var safe=Rect("SafeContent",panel.transform); Fill(safe); safe.gameObject.AddComponent<NeonSafeArea>();
-        safe.gameObject.AddComponent<NeonPanelEntrance>();
+        RegisterScreen(panel, safe, panel == gm.gameplayPanel ? NeonScreenMotion.Kind.Gameplay :
+            panel == gm.settingsPanel ? NeonScreenMotion.Kind.Modal :
+            panel == gm.successPanel || panel == gm.failPanel ? NeonScreenMotion.Kind.Result : NeonScreenMotion.Kind.Page);
         return safe;
+    }
+
+    private void RegisterScreen(GameObject panel, RectTransform visual, NeonScreenMotion.Kind kind)
+    {
+        var motion = panel.AddComponent<NeonScreenMotion>();
+        motion.Initialize(visual, kind);
+        motion.Settled += RefreshInputLayers;
+        screens.Add(panel, motion);
+    }
+    private bool WantsVisible(GameObject panel) => panel != null && screens.TryGetValue(panel, out var motion) && motion.WantsVisible;
+    private bool CoversInput(GameObject panel) => panel != null && screens.TryGetValue(panel, out var motion) && motion.CoversInput;
+    private void SetVisible(GameObject panel, bool visible, Action onHidden = null)
+    {
+        if (panel != null && screens.TryGetValue(panel, out var motion)) motion.SetVisible(visible, onHidden);
+        else onHidden?.Invoke();
+    }
+    private void SetBasePanels(GameObject destination)
+    {
+        SetVisible(gm.mainMenuPanel, destination == gm.mainMenuPanel);
+        SetVisible(gm.gameplayPanel, destination == gm.gameplayPanel);
+        SetVisible(gm.successPanel, destination == gm.successPanel);
+        SetVisible(gm.failPanel, destination == gm.failPanel);
+        SetVisible(gm.settingsPanel, false);
+        if (destination != null) destination.transform.SetAsLastSibling();
+    }
+    public void ShowBaseScreen(GameObject destination)
+    {
+        SetBasePanels(destination);
+        HideShop();
+        HideAbandonConfirmation();
+        RefreshInputLayers();
+    }
+    public void ShowSettings()
+    {
+        SetVisible(gm.settingsPanel, true);
+        RefreshInputLayers();
+    }
+    public void DismissSettings(Action onHidden)
+    {
+        SetVisible(gm.settingsPanel, false, onHidden);
+        RefreshInputLayers();
+    }
+    public void SetGameplayFeedbackPaused(bool paused) => hudMotion?.SetPaused(paused);
+    public void NormalizeGameplayFeedback() => hudMotion?.NormalizeImmediate();
+    public void SettleGameplayEntrance()
+    {
+        if (screens.TryGetValue(gm.gameplayPanel, out var motion)) motion.SettleVisible();
     }
     private TMP_Text Txt(string name,Transform parent,string value,float size,float x,float y,float w,float h,Color? color=null,float ax=0,float ay=1)
     {
@@ -146,6 +200,8 @@ public sealed class RogueliteUIController : MonoBehaviour
         gm.homeButton=Button("Home",play,"HOME"); At((RectTransform)gm.homeButton.transform,0,0,242,100,356,104);
         gm.settingsButton=Button("Pause",play,"PAUSE"); At((RectTransform)gm.settingsButton.transform,1,0,-242,100,356,104);
         var pause=Shape("PauseGlyph",gm.settingsButton.transform,NeonShape.Kind.Pause,T.Text,5); At(pause.rectTransform,1,.5f,-50,0,36,36);
+        hudMotion = play.gameObject.AddComponent<NeonHudMotion>();
+        hudMotion.Initialize(healthFill, progressFill, health, objective, timerLabel, reserve, timerFill);
     }
 
     private Image Track(string name,Transform parent,Vector2 topLeft,float width,float height)
@@ -176,13 +232,14 @@ public sealed class RogueliteUIController : MonoBehaviour
     }
     public void UpdateLevelContext(LevelData level,int count)
     {
+        hudMotion.NormalizeImmediate();
         cachedLevel=level.levelNumber;
         gm.levelText.text=$"{cachedLevel:00}<size=30><color=#9EAFAD> / {count}</color></size>";
         var list=new List<string>(); if(!Mathf.Approximately(level.rotateSpeed,0))list.Add("ROTATE");if(level.scaleEnabled)list.Add("SCALE");if(level.movementEnabled)list.Add("MOVE");
         modifierText=string.Join(" · ",list); modifiers.text=modifierText;
         ApplyGameplayTheme(level.textPrimaryColor,level.outlineColor);
     }
-    public void RefreshHud(int currentHealth,int maximumHealth,float reserveSeconds,float maximumReserveSeconds,long runPending,int progress,int required,float remaining,float timeLimit,bool reserveActive,bool reverseActive,bool debug)
+    public void RefreshHud(int currentHealth,int maximumHealth,float reserveSeconds,float maximumReserveSeconds,long runPending,int progress,int required,float remaining,float timeLimit,bool reserveActive,bool reverseActive,bool debug,int reverseRemaining=0)
     {
         health.SetText("<mspace=22>{0}</mspace><color=#9EAFAD> / {1} HEALTH</color>",Mathf.Max(0,currentHealth),maximumHealth);
         health.color=currentHealth<=1?T.Danger:T.Text;
@@ -192,16 +249,19 @@ public sealed class RogueliteUIController : MonoBehaviour
         gm.timerText.color=reserveActive?T.Reserve:remaining<=5?T.Reserve:T.Text;
         timerLabel.text=reserveActive?"RESERVE · DRAINING":"LEVEL TIME";timerLabel.color=reserveActive?T.Reserve:T.Muted;
         objective.SetText("{0} <color=#9EAFAD>/ {1} TARGETS</color>",progress,required);
-        SetFill(progressFill,progress/(float)Mathf.Max(1,required),reverseActive?T.Reverse:T.Primary);
+        progressFill.color = reverseActive ? T.Reverse : T.Primary;
         SetFill(timerFill,(reserveActive?reserveSeconds:remaining)/Mathf.Max(.01f,reserveActive?maximumReserveSeconds:timeLimit),reserveActive?T.Reserve:T.Target);
         SetFill(healthFill,currentHealth/(float)Mathf.Max(1,maximumHealth),currentHealth<=1?T.Danger:T.Primary);
         rule.text=reverseActive?"REVERSE / SMALLEST":"LARGEST OUTLINE";rule.color=ruleRail.color=reverseActive?T.Reverse:T.Target;
+        // The rule stays upright; this count is the real remaining Reverse sequence.
+        if (reverseActive) objective.SetText("{0} <color=#9EAFAD>/ {1} TARGETS · {2} REVERSE LEFT</color>",progress,required,reverseRemaining);
         if(displayedPending!=runPending||displayedDebug!=debug)
         {
             pending.text=debug?"PRACTICE SESSION":$"+{Math.Max(0,runPending):N0} PENDING COINS";
             displayedPending=runPending;displayedDebug=debug;
         }
         debugBadge.gameObject.SetActive(debug);
+        hudMotion.SetState(currentHealth, maximumHealth, progress, required, reserveActive);
     }
     public void ApplyGameplayTheme(Color primary,Color accent)
     {
@@ -229,9 +289,12 @@ public sealed class RogueliteUIController : MonoBehaviour
         var d=Txt("SettingDescription",parent,description,29,T.pageMargin,-y-84,720,114,T.Muted);d.textWrappingMode=TextWrappingModes.Normal;
         var bg=Panel(reduced?"ReducedEffectsToggle":"HapticsToggle",parent,T.Raised,true);At(bg.rectTransform,1,1,-150,-y-46,174,96);
         var toggle=bg.gameObject.AddComponent<Toggle>();toggle.targetGraphic=bg;toggle.navigation=new Navigation{mode=Navigation.Mode.None};
+        toggle.transition = Selectable.Transition.None;
+        toggle.toggleTransition = Toggle.ToggleTransition.None;
         var on=Panel("On",bg.transform,T.Primary);Fill(on.rectTransform,6,6,6,6);toggle.graphic=on;
         var label=Text("State",bg.transform,"OFF",27,T.Text,TextAlignmentOptions.Center);Fill(label.rectTransform);
         toggle.onValueChanged.AddListener(v=>{label.text=v?"ON":"OFF";label.color=v?T.Background:T.Text;});
+        bg.gameObject.AddComponent<NeonToggleFeedback>().Initialize(toggle);
         return toggle;
     }
     public void SetHaptics(bool enabled)
@@ -248,18 +311,19 @@ public sealed class RogueliteUIController : MonoBehaviour
         // A newly enabled Graphic has depth -1 until Unity renders it. Disable
         // the underlay immediately so a second touch cannot pass through during
         // that frame. This changes input only, never simulation or pause state.
-        bool dialog=IsAbandonConfirmationVisible, paused=gm.settingsPanel.activeSelf;
+        if (gm == null) return;
+        bool dialog=CoversInput(abandonDialog), paused=CoversInput(gm.settingsPanel);
         bool covered=dialog||paused||IsShopVisible;
         SetInput(gm.mainMenuPanel,!covered);SetInput(gm.gameplayPanel,!covered);
         SetInput(gm.successPanel,!covered);SetInput(gm.failPanel,!covered);
         SetInput(gm.settingsPanel,!dialog);SetInput(shopPanel,!dialog&&!paused);
         SetInput(abandonDialog,true);
+        if (paused) gm.settingsPanel.transform.SetAsLastSibling();
+        if (dialog) abandonDialog.transform.SetAsLastSibling();
     }
-    private static void SetInput(GameObject panel,bool allowed)
+    private void SetInput(GameObject panel,bool allowed)
     {
-        if(panel==null)return;
-        var group=panel.GetComponent<CanvasGroup>();if(group==null)group=panel.AddComponent<CanvasGroup>();
-        group.interactable=allowed;group.blocksRaycasts=allowed;
+        if (panel != null && screens.TryGetValue(panel, out var motion)) motion.SetInputAllowed(allowed);
     }
 
     private ResultView CreateResult(RectTransform root,bool success)
@@ -279,20 +343,26 @@ public sealed class RogueliteUIController : MonoBehaviour
         var primary=WideButton("ResultPrimary",root,"UPGRADES",210,true);var home=WideButton("ResultHome",root,"RETURN HOME",72,false);
         if(success){gm.successLevelText=v.title;gm.successNextButton=primary;gm.successMenuButton=home;}
         else {gm.failLevelText=v.title;gm.failReasonText=v.description;gm.failPrimaryButton=primary;gm.failMenuButton=home;}
+        v.motion = root.gameObject.AddComponent<NeonResultMotion>();
+        v.motion.Add(v.emblem.rectTransform, 0); v.motion.Add(v.title.rectTransform, 0);
+        v.motion.Add(v.amount.rectTransform, 1); v.motion.Add(v.amountLabel.rectTransform, 1);
+        v.motion.Add(v.leftValue.rectTransform, 2); v.motion.Add(v.rightValue.rectTransform, 2);
         return v;
     }
     public void ShowLevelComplete(ActiveRunData run,int completed,int next,long reward,bool debug=false)
     {
-        var v=successView;v.emblem.kind=NeonShape.Kind.Check;At(v.emblem.rectTransform,0,1,130,-211,128,128);v.emblem.SetVerticesDirty();v.title.fontSize=T.headingSize;v.eyebrow.text=debug?"SANDBOX / LEVEL COMPLETE":"CAMPAIGN / LEVEL COMPLETE";
+        var v=successView;v.motion.NormalizeImmediate();v.emblem.kind=NeonShape.Kind.Check;At(v.emblem.rectTransform,0,1,130,-211,128,128);v.emblem.SetVerticesDirty();v.title.fontSize=T.headingSize;v.eyebrow.text=debug?"SANDBOX / LEVEL COMPLETE":"CAMPAIGN / LEVEL COMPLETE";
         v.title.text=$"LEVEL {completed:00}\nCOMPLETE.";v.description.text=debug?"Practice complete. Your real run is untouched.":$"Next up: Level {next:00}.\nYour health and reserve carry forward.";
         v.emblem.color=T.Primary;v.amount.color=T.Primary;v.amountLabel.text=debug?"PRACTICE SESSION":"LEVEL REWARD / PENDING";v.amount.text=debug?"WELL PLAYED":$"+{reward:N0}<size=34> COINS</size>";
         v.amount.fontSize=debug?66:112;v.leftLabel.text="HEALTH CARRIED";v.leftValue.text=$"{run.currentHealth} / {run.upgrades.maxHealth}";
         v.rightLabel.text="RESERVE CARRIED";v.rightValue.text=$"{run.currentReserveSeconds:0.0}<size=28>s</size>";
         v.footer.text=debug?"No coins or progression changed.":$"{run.pendingCoins:N0} pending run coins\nBanked when this run ends.";
+        ShowBaseScreen(gm.successPanel); v.motion.Play();
     }
     public void ShowRunSummary(RunSummaryData summary)
     {
         var v=summary.campaignCompleted?successView:failView;bool win=summary.campaignCompleted;
+        v.motion.NormalizeImmediate();
         v.eyebrow.text=win?"NEON REFLEX / CAMPAIGN COMPLETE":"CAMPAIGN / RUN REPORT";
         v.title.text=win?"CAMPAIGN\nCONQUERED.":summary.reason=="RUN ABANDONED"?"RUN\nCLOSED.":"RUN\nENDED.";
         v.title.fontSize=win?78:T.headingSize;
@@ -304,21 +374,24 @@ public sealed class RogueliteUIController : MonoBehaviour
         v.amountLabel.text="COINS EARNED / BANKED";v.amount.text=$"+{summary.totalEarned:N0}";v.amount.fontSize=112;v.amount.color=T.Primary;
         v.leftLabel.text="LEVEL REACHED";v.leftValue.text=summary.highestLevelEntered.ToString("00");v.rightLabel.text="LEVELS COMPLETED";v.rightValue.text=summary.levelsCompleted.ToString("00");
         v.footer.text=win?$"{summary.runLevelRewards:N0} level rewards + {summary.completionBonus:N0} completion bonus\nPermanent balance: {summary.newWalletBalance:N0} coins":$"Permanent balance: {summary.newWalletBalance:N0} coins\nPut your earnings into your next run.";
+        ShowBaseScreen(win ? gm.successPanel : gm.failPanel); v.motion.Play();
     }
 
     public void ShowDebugRunEnded(string reason,ActiveRunData run,int level)
     {
-        var v=failView;v.eyebrow.text="DEBUG SANDBOX / PRACTICE REPORT";
+        var v=failView;v.motion.NormalizeImmediate();v.eyebrow.text="DEBUG SANDBOX / PRACTICE REPORT";
         v.title.text="PRACTICE\nCOMPLETE.";v.description.text=reason=="HEALTH DEPLETED"?"Health depleted. Your real run is untouched.":"Reserve depleted. Your real run is untouched.";
         v.amountLabel.text="SANDBOX / NO REWARDS";v.amount.text="NO COINS BANKED";v.amount.fontSize=58;v.amount.color=T.Muted;
         v.leftLabel.text="LEVEL PRACTICED";v.leftValue.text=level.ToString("00");v.rightLabel.text="CORRECT TARGETS";v.rightValue.text=run.levelState.objectiveProgress.ToString();
         v.footer.text="No coins, upgrades or saved run state changed.";v.emblem.color=T.Muted;
+        ShowBaseScreen(gm.failPanel); v.motion.Play();
     }
 
     private void CreateShop()
     {
         shopPanel=Panel("PermanentUpgrades",canvas,T.Background,true).gameObject;Fill((RectTransform)shopPanel.transform);
-        shop=Rect("SafeContent",shopPanel.transform);Fill(shop);shop.gameObject.AddComponent<NeonSafeArea>();shop.gameObject.AddComponent<NeonPanelEntrance>();
+        shop=Rect("SafeContent",shopPanel.transform);Fill(shop);shop.gameObject.AddComponent<NeonSafeArea>();
+        RegisterScreen(shopPanel, shop, NeonScreenMotion.Kind.Page);
         Eyebrow(shop,"NEON REFLEX / PERMANENT UPGRADES");
         Txt("ShopTitle",shop,"BUILD YOUR\nNEXT RUN.",80,T.pageMargin,-166,900,195).fontStyle=FontStyles.Bold;
         wallet=Txt("BankedCoins",shop,"",30,T.pageMargin,-376,940,54,T.Primary);
@@ -329,7 +402,7 @@ public sealed class RogueliteUIController : MonoBehaviour
         var scroll=viewport.gameObject.AddComponent<ScrollRect>();scroll.content=list;scroll.viewport=viewport.rectTransform;scroll.horizontal=false;scroll.vertical=true;scroll.movementType=ScrollRect.MovementType.Clamped;scroll.scrollSensitivity=40;
         for(int i=0;i<4;i++)cards[(UpgradeId)i]=CreateUpgrade((UpgradeId)i,list,i);
         shopFeedback=Txt("PurchaseFeedback",shop,"PERMANENT BENEFITS. APPLIED TO NEW RUNS.",23,T.pageMargin,220,940,54,T.Muted,0,0);
-        var back=WideButton("ShopBack",shop,"RETURN HOME",64,false);back.onClick.AddListener(()=>HideShop(true));shopPanel.SetActive(false);
+        var back=WideButton("ShopBack",shop,"RETURN HOME",64,false);back.onClick.AddListener(()=>HideShop(true));
     }
     private UpgradeView CreateUpgrade(UpgradeId id,Transform parent,int index)
     {
@@ -345,14 +418,16 @@ public sealed class RogueliteUIController : MonoBehaviour
         v.buy=Button("Purchase",row,"",false);At((RectTransform)v.buy.transform,1,1,-119,-213,236,96);
         var bt=v.buy.GetComponentInChildren<TMP_Text>();bt.fontSize=28;bt.alignment=TextAlignmentOptions.Center;Fill(bt.rectTransform,8,0,8,0);
         v.progress=Track("TierProgress",row,new Vector2(0,-132),70,4);
+        v.motion = row.gameObject.AddComponent<NeonPurchaseMotion>();
+        v.motion.Initialize(row, v.accent, v.tier, v.benefit, wallet, v.progress);
         v.buy.onClick.AddListener(()=>
         {
             if(purchaseRequested!=null&&purchaseRequested(id))
-            { RefreshShop();v.status.text="INSTALLED / NEXT RUN UPDATED";v.status.color=v.accent;shopFeedback.text=v.title.text+" INSTALLED";shopFeedback.color=v.accent;feedbackUntil=Time.unscaledTime+1.8f; }
+            { RefreshShop();v.status.text="INSTALLED / NEXT RUN UPDATED";v.status.color=v.accent;shopFeedback.text=v.title.text+" INSTALLED";shopFeedback.color=v.accent;feedbackUntil=1.8f;v.motion.PlayCommitted(); }
         });return v;
     }
     public void ShowShop(GameConfig gameConfig,PlayerProfileData player,bool activeRun)
-    { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop();shopPanel.SetActive(true);shopPanel.transform.SetAsLastSibling();RefreshInputLayers(); }
+    { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop();SetBasePanels(null);SetVisible(shopPanel,true);shopPanel.transform.SetAsLastSibling();RefreshInputLayers(); }
     public void RefreshShop(GameConfig gameConfig,PlayerProfileData player,bool activeRun)
     { config=gameConfig;profile=player;hasActiveRun=activeRun;RefreshShop(); }
     private void RefreshShop()
@@ -380,14 +455,15 @@ public sealed class RogueliteUIController : MonoBehaviour
         switch(id){case UpgradeId.MaximumHealth:return $"{Mathf.Clamp(Mathf.RoundToInt(value),1,config.maximumHealthCap)} HP";case UpgradeId.StartingReserve:return $"{value:0.#}s";case UpgradeId.GridStabilizer:return $"{value*100:0}% speed";default:return $"+{value:0.#}s cooldown";}
     }
     void Update()
-    { if(feedbackUntil>0&&Time.unscaledTime>feedbackUntil){feedbackUntil=0;shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;} }
+    { if(feedbackUntil>0){feedbackUntil=Mathf.Max(0,feedbackUntil-NeonMotion.Delta());if(feedbackUntil<=0){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;}} }
     public void HideShop(bool notify=false)
-    { feedbackUntil=0;if(shopFeedback!=null){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;}if(shopPanel!=null)shopPanel.SetActive(false);RefreshInputLayers();if(notify)shopClosed?.Invoke(); }
+    { feedbackUntil=0;if(shopFeedback!=null){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=T.Muted;}SetVisible(shopPanel,false);RefreshInputLayers();if(notify)shopClosed?.Invoke(); }
 
     private void CreateAbandonDialog()
     {
         abandonDialog=Panel("AbandonConfirmation",canvas,T.Background,true).gameObject;Fill((RectTransform)abandonDialog.transform);
         var safe=Rect("SafeContent",abandonDialog.transform);Fill(safe);safe.gameObject.AddComponent<NeonSafeArea>();
+        RegisterScreen(abandonDialog, safe, NeonScreenMotion.Kind.Modal);
         var body=Rect("Dialog",safe);At(body,.5f,.5f,0,0,952,850);
         var glyph=Shape("EndGlyph",body,NeonShape.Kind.Reverse,T.Reserve,4);At(glyph.rectTransform,0,1,46,-38,72,72);
         Txt("Title",body,"END THIS\nRUN?",86,0,-143,930,210).fontStyle=FontStyles.Bold;
@@ -395,9 +471,8 @@ public sealed class RogueliteUIController : MonoBehaviour
         var confirm=Button("ConfirmAbandon",body,"END RUN & BANK COINS",true);At((RectTransform)confirm.transform,.5f,0,0,204,952,120);confirm.image.color=T.Reserve;
         confirm.onClick.AddListener(()=>{HideAbandonConfirmation();abandonConfirmed?.Invoke();});
         var cancel=Button("KeepRun",body,"KEEP RUN");At((RectTransform)cancel.transform,.5f,0,0,62,952,112);cancel.onClick.AddListener(HideAbandonConfirmation);
-        abandonDialog.SetActive(false);
     }
     public void ShowAbandonConfirmation()
-    { abandonMessage.text=$"Your run will end. {pendingCoins:N0} pending coins from completed levels will be banked.\nThe current level earns no coins.";abandonDialog.SetActive(true);abandonDialog.transform.SetAsLastSibling();RefreshInputLayers(); }
-    public void HideAbandonConfirmation(){if(abandonDialog!=null)abandonDialog.SetActive(false);RefreshInputLayers();}
+    { abandonMessage.text=$"Your run will end. {pendingCoins:N0} pending coins from completed levels will be banked.\nThe current level earns no coins.";SetVisible(abandonDialog,true);RefreshInputLayers(); }
+    public void HideAbandonConfirmation(){SetVisible(abandonDialog,false);RefreshInputLayers();}
 }

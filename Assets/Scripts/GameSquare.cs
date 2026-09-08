@@ -1,11 +1,10 @@
-using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 /// <summary>
-/// Presentation for one pointer-down target. Size remains an immediate, discrete
-/// signal; feedback never changes the cell transform used by gameplay.
+/// Immediate logical target roles with owned, interruptible visual motion.
+/// Only presentation children move; the cell and gameplay transforms never do.
 /// </summary>
 public class GameSquare : MonoBehaviour, IPointerDownHandler
 {
@@ -19,122 +18,252 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     public int gridX;
     public int gridY;
     public LitSize currentLitSize = LitSize.None;
-
     public System.Action<GameSquare> onClicked;
 
     private PrecisionCellFrame targetFrame;
-    private PrecisionCellFrame cellFrame;
-    private Coroutine tapCoroutine;
-    private Color baseCellColor;
-    private float smallScale = 0.4f;
-    private float mediumScale = 0.7f;
-    private float fullScale = 1f;
-    private bool animationsPaused;
+    private PrecisionCellFrame retiringFrame;
+    private Color baseCellColor, targetColor;
+    private Color feedbackStart;
+    private float smallScale = .4f, mediumScale = .7f, fullScale = 1f;
+    private float renderedScale, renderedAlpha;
+    private float roleStartScale, roleStartAlpha, roleTargetScale, roleElapsed, roleDuration;
+    private float exitStartScale, exitStartAlpha, exitElapsed, exitDuration, exitContraction;
+    private float feedbackElapsed, feedbackDuration;
+    private bool targetAnimating, exitActive, feedbackActive;
+    private bool consumedForNextAssignment, animationsPaused;
 
-    public void SetAnimationsPaused(bool paused)
-    {
-        animationsPaused = paused;
-    }
+    public float RenderedScale => renderedScale;
+    public float RenderedAlpha => renderedAlpha;
+    public float RetiringAlpha => retiringFrame != null && exitActive ? retiringFrame.color.a : 0f;
+    public bool IsTargetAnimating => targetAnimating;
+    public bool HasRetiringVisual => exitActive;
+
+    public void SetAnimationsPaused(bool paused) => animationsPaused = paused;
 
     public void Setup(int x, int y, Sprite solidSprite, Sprite outlineSprite,
         Color cellColor, Color outlineColor, float small, float medium, float full)
     {
         gridX = x;
         gridY = y;
-        StopTapFeedback();
-
-        // Keep a trace of authored level palettes inside the shared visual system.
-        // The three target sizes deliberately share one color and one opacity.
-        baseCellColor = Color.Lerp(NeonTheme.T.Surface, cellColor, 0.06f);
+        smallScale = small;
+        mediumScale = medium;
+        fullScale = full;
+        currentLitSize = LitSize.None;
+        baseCellColor = Color.Lerp(NeonTheme.T.Surface, cellColor, .06f);
         baseCellColor.a = 1f;
-        Color targetColor = NeonTheme.LevelTarget(outlineColor);
+        targetColor = NeonTheme.LevelTarget(outlineColor);
         targetColor.a = 1f;
         bgImage.sprite = null;
         bgImage.color = baseCellColor;
         bgImage.raycastTarget = true;
-
-        // Retain the prefab's serialized reference and size container. Replace
-        // only its textured rendering with crisp, four-quad native UI geometry.
+        NeonGridFill.Apply(bgImage);
         outlineImage.enabled = false;
         outlineImage.raycastTarget = false;
         outlineImage.color = targetColor;
-        if (cellFrame == null)
-        {
-            cellFrame = CreateFrame("CellBoundary", bgImage.rectTransform);
-            cellFrame.transform.SetAsFirstSibling();
-            cellFrame.LineWidth = 1.2f;
-        }
-        Color boundary = NeonTheme.T.Muted;
-        boundary.a = NeonTheme.T.cellBoundaryOpacity;
-        cellFrame.color = boundary;
+
+        // Cell fills already define the grid. A separate subpixel boundary on
+        // every cell caused visible flicker during grid motion.
         if (targetFrame == null)
             targetFrame = CreateFrame("PrecisionOutline", outlineImage.rectTransform);
         targetFrame.color = targetColor;
-
-        smallScale = small;
-        mediumScale = medium;
-        fullScale = full;
-        SetLitSize(LitSize.None, false);
+        if (retiringFrame == null)
+        {
+            // One reusable exit mesh per cell, independent of its active role.
+            retiringFrame = CreateFrame("RetiringTarget", bgImage.rectTransform);
+            retiringFrame.transform.SetAsFirstSibling();
+            retiringFrame.CornerFraction = .22f;
+        }
+        NormalizePresentation();
     }
 
+    /// <summary>Assign each cell once from the latest authoritative snapshot.</summary>
     public void SetLitSize(LitSize size, bool animate)
     {
-        currentLitSize = size;
+        LitSize previous = currentLitSize;
+        bool wasConsumed = consumedForNextAssignment;
+        consumedForNextAssignment = false;
+        currentLitSize = size; // Input and the model never wait for a tween.
         if (outlineImage == null) return;
 
-        // `animate` is kept for existing callers. Interpolating outlines would
-        // momentarily report the wrong size while input is already available.
-        float scale = GetScaleValue(size);
-        outlineImage.transform.localScale = Vector3.one * scale;
-        outlineImage.gameObject.SetActive(size != LitSize.None);
-        if (targetFrame != null && scale > 0f)
+        if (!animate || !gameObject.activeInHierarchy)
         {
-            // Keep equal apparent line weights across Small, Medium, and Large.
-            targetFrame.LineWidth = NeonTheme.T.targetStrokeWidth / scale;
-            targetFrame.SetVerticesDirty();
+            CancelExit();
+            SettleTarget();
+            return;
         }
+        if (size == LitSize.None)
+        {
+            if (!wasConsumed && previous != LitSize.None) BeginRetiringVisual();
+            SettleTarget();
+            return;
+        }
+        if (previous == size && !wasConsumed) return;
+
+        bool appearing = previous == LitSize.None || wasConsumed;
+        bool interrupted = targetAnimating && !appearing;
+        roleTargetScale = GetScaleValue(size);
+        roleDuration = Mathf.Max(0f, appearing ? NeonMotion.T.targetAppearDuration
+            : interrupted ? Mathf.Min(NeonMotion.T.targetRoleDuration, NeonMotion.T.targetRoleRetargetDuration)
+            : NeonMotion.T.targetRoleDuration);
+        if (roleDuration <= 0f)
+        {
+            SettleTarget();
+            return;
+        }
+
+        float start = renderedScale;
+        if (appearing)
+        {
+            // A new Large never travels through the Small/Medium size cues.
+            start = size == LitSize.Small && !NeonTheme.ReducedEffects
+                ? roleTargetScale * Mathf.Clamp(NeonMotion.T.targetSpawnScale, .1f, 1f)
+                : roleTargetScale;
+            renderedAlpha = Mathf.Clamp01(NeonMotion.T.targetSpawnAlpha);
+        }
+        // Reassignment may need a small immediate semantic nudge. All remaining
+        // interpolation stays in this role's disjoint band, including rapid taps.
+        roleStartScale = TargetRoleBands.ClampStart(size, start, smallScale, mediumScale,
+            fullScale, NeonMotion.T.targetRoleGap);
+        roleStartAlpha = Mathf.Clamp01(renderedAlpha);
+        roleElapsed = 0f;
+        targetAnimating = true;
+        RenderTarget(roleStartScale, roleStartAlpha);
     }
 
-    /// <summary>Called only after GameManager validates an actual gameplay tap.</summary>
+    /// <summary>
+    /// After a successful logical commit, capture the consumed visual before the
+    /// new snapshot is assigned. Reuse of this cell cannot affect the exit mesh.
+    /// </summary>
+    public void PlayConsumedFeedback()
+    {
+        if (outlineImage == null || currentLitSize == LitSize.None) return;
+        BeginRetiringVisual();
+        consumedForNextAssignment = true;
+        targetAnimating = false;
+        RenderTarget(0f, 0f);
+    }
+
+    /// <summary>Local acknowledgement only; called after a validated tap.</summary>
     public void PlayTapFeedback(bool correct)
     {
         if (bgImage == null || !gameObject.activeInHierarchy) return;
-        StopTapFeedback();
+        float intensity = correct ? NeonMotion.T.correctCellTint : NeonMotion.T.wrongCellTint;
+        if (NeonTheme.ReducedEffects) intensity *= NeonMotion.T.reducedEffectsStrength;
         Color accent = correct ? NeonTheme.T.Primary : NeonTheme.T.Danger;
-        float intensity = NeonTheme.ReducedEffects ? 0.13f : (correct ? 0.25f : 0.34f);
-        Color impact = Color.Lerp(baseCellColor, accent, intensity);
-        bgImage.color = impact;
-        tapCoroutine = StartCoroutine(TapFeedbackRoutine(impact, correct ? 0.16f : 0.24f));
+        Color impact = Color.Lerp(baseCellColor, accent, Mathf.Clamp01(intensity));
+        // Merge repeated feedback from its current visible value, with no queue.
+        feedbackStart = Color.Lerp(bgImage.color, impact, .9f);
+        feedbackDuration = Mathf.Max(0f, correct ? NeonMotion.T.correctCellDuration : NeonMotion.T.wrongCellDuration);
+        feedbackElapsed = 0f;
+        feedbackActive = feedbackDuration > 0f;
+        bgImage.color = feedbackActive ? feedbackStart : baseCellColor;
     }
 
-    // Retained for API compatibility. Target-directed pulses reveal the answer
-    // and distort the size challenge, so announcements now explain only the rule.
+    // Compatibility only: target-directed pulses would reveal the answer.
     public void PlayAttentionPulse(float delay = 0f) { }
 
-    private IEnumerator TapFeedbackRoutine(Color impact, float duration)
+    private void Update() => AdvancePresentation(NeonMotion.Delta(animationsPaused));
+
+    /// <summary>Explicit stepping also supports deterministic lifecycle tests.</summary>
+    public void AdvancePresentation(float delta)
     {
-        float elapsed = 0f;
-        while (elapsed < duration)
+        if (animationsPaused || delta <= 0f || !gameObject.activeInHierarchy) return;
+        if (targetAnimating)
         {
-            if (!animationsPaused) elapsed += Time.unscaledDeltaTime;
-            float t = Mathf.Clamp01(elapsed / duration);
-            bgImage.color = Color.Lerp(impact, baseCellColor, 1f - (1f - t) * (1f - t));
-            yield return null;
+            roleElapsed += delta;
+            float t = Mathf.Clamp01(roleElapsed / roleDuration);
+            float eased = NeonMotion.Ease(t);
+            RenderTarget(Mathf.Lerp(roleStartScale, roleTargetScale, eased), Mathf.Lerp(roleStartAlpha, 1f, eased));
+            if (t >= 1f) SettleTarget();
         }
-        bgImage.color = baseCellColor;
-        tapCoroutine = null;
+        if (exitActive)
+        {
+            exitElapsed += delta;
+            float t = Mathf.Clamp01(exitElapsed / exitDuration);
+            float eased = NeonMotion.Ease(t);
+            float scale = exitStartScale * (1f - exitContraction * eased);
+            retiringFrame.rectTransform.localScale = Vector3.one * scale;
+            retiringFrame.LineWidth = NeonTheme.T.targetStrokeWidth / Mathf.Max(.001f, scale);
+            Color color = NeonTheme.T.Primary;
+            color.a = exitStartAlpha * (1f - eased);
+            retiringFrame.color = color;
+            if (t >= 1f) CancelExit();
+        }
+        if (feedbackActive)
+        {
+            feedbackElapsed += delta;
+            float t = Mathf.Clamp01(feedbackElapsed / feedbackDuration);
+            float eased = NeonMotion.Ease(t);
+            bgImage.color = Color.Lerp(feedbackStart, baseCellColor, eased);
+            if (t >= 1f) feedbackActive = false;
+        }
     }
 
-    private void StopTapFeedback()
+    /// <summary>
+    /// Clear transient cosmetics without changing game state. By default the
+    /// latest role settles exactly; false leaves that role's current tween owned.
+    /// </summary>
+    public void NormalizePresentation(bool settleTargets = true)
     {
-        if (tapCoroutine != null) StopCoroutine(tapCoroutine);
-        tapCoroutine = null;
+        consumedForNextAssignment = false;
+        feedbackActive = false;
+        CancelExit();
         if (bgImage != null) bgImage.color = baseCellColor;
+        if (settleTargets) SettleTarget();
     }
 
-    private void OnDisable()
+    private void OnDisable() => NormalizePresentation();
+
+    private void BeginRetiringVisual()
     {
-        StopTapFeedback();
+        if (retiringFrame == null || renderedScale <= 0f || renderedAlpha <= 0f) return;
+        exitDuration = Mathf.Max(0f, NeonMotion.T.targetExitDuration);
+        if (exitDuration <= 0f)
+        {
+            CancelExit();
+            return;
+        }
+        exitStartScale = renderedScale;
+        exitStartAlpha = Mathf.Clamp01(NeonMotion.T.targetExitAlpha) * renderedAlpha;
+        if (NeonTheme.ReducedEffects) exitStartAlpha *= Mathf.Clamp01(NeonMotion.T.reducedEffectsStrength);
+        exitContraction = NeonTheme.ReducedEffects ? 0f : Mathf.Clamp(NeonMotion.T.targetExitContraction, 0f, .2f);
+        exitElapsed = 0f;
+        exitActive = true;
+        retiringFrame.rectTransform.localScale = Vector3.one * exitStartScale;
+        retiringFrame.LineWidth = NeonTheme.T.targetStrokeWidth / Mathf.Max(.001f, exitStartScale);
+        Color tint = NeonTheme.T.Primary;
+        tint.a = exitStartAlpha;
+        retiringFrame.color = tint;
+        retiringFrame.gameObject.SetActive(true);
+    }
+
+    private void CancelExit()
+    {
+        exitActive = false;
+        if (retiringFrame != null) retiringFrame.gameObject.SetActive(false);
+    }
+
+    private void SettleTarget()
+    {
+        targetAnimating = false;
+        float scale = GetScaleValue(currentLitSize);
+        RenderTarget(scale, currentLitSize == LitSize.None ? 0f : 1f);
+    }
+
+    private void RenderTarget(float scale, float alpha)
+    {
+        renderedScale = scale;
+        renderedAlpha = alpha;
+        if (outlineImage == null) return;
+        outlineImage.transform.localScale = Vector3.one * scale;
+        outlineImage.gameObject.SetActive(scale > 0f && alpha > 0f);
+        if (targetFrame != null)
+        {
+            targetFrame.LineWidth = NeonTheme.T.targetStrokeWidth / Mathf.Max(.001f, scale);
+            Color tint = targetColor;
+            tint.a = alpha;
+            targetFrame.color = tint;
+        }
     }
 
     private float GetScaleValue(LitSize size)
@@ -162,27 +291,92 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         return frame;
     }
 
-    public void OnPointerDown(PointerEventData eventData)
+    public void OnPointerDown(PointerEventData eventData) => onClicked?.Invoke(this);
+}
+
+/// <summary>Disjoint size bands preserve the gameplay language during a morph.</summary>
+public static class TargetRoleBands
+{
+    public static float ClampStart(GameSquare.LitSize role, float value, float small, float medium, float large, float relativeGap)
     {
-        onClicked?.Invoke(this);
+        float gap = Mathf.Max(0f, Mathf.Min(medium - small, large - medium)) * Mathf.Clamp(relativeGap, .001f, .45f);
+        float lowerSplit = (small + medium) * .5f;
+        float upperSplit = (medium + large) * .5f;
+        switch (role)
+        {
+            case GameSquare.LitSize.Small: return Mathf.Clamp(value, Mathf.Min(small, small * .1f), lowerSplit - gap);
+            case GameSquare.LitSize.Medium: return Mathf.Clamp(value, lowerSplit + gap, upperSplit - gap);
+            case GameSquare.LitSize.Large: return Mathf.Clamp(value, upperSplit + gap, large);
+            default: return 0f;
+        }
     }
 }
 
-/// <summary>A single native UI mesh without texture padding, glow, or fill.</summary>
+/// <summary>A native UI frame; short corner segments distinguish retiring effects.</summary>
 public sealed class PrecisionCellFrame : MaskableGraphic
 {
-    public float LineWidth { get; set; } = 4.5f;
+    public override Material defaultMaterial => NeonGridRendering.Material ?? base.defaultMaterial;
+
+    protected override void OnTransformParentChanged()
+    {
+        base.OnTransformParentChanged();
+        NeonGridRendering.EnsureChannels(canvas);
+    }
+
+    protected override void OnEnable()
+    {
+        base.OnEnable();
+        NeonGridRendering.EnsureChannels(canvas);
+    }
+
+    protected override void OnCanvasHierarchyChanged()
+    {
+        base.OnCanvasHierarchyChanged();
+        NeonGridRendering.EnsureChannels(canvas);
+    }
+
+    private float lineWidth = 4.5f;
+    private float cornerFraction = 1f;
+    public float LineWidth
+    {
+        get => lineWidth;
+        set { if (Mathf.Approximately(lineWidth, value)) return; lineWidth = value; SetVerticesDirty(); }
+    }
+    public float CornerFraction
+    {
+        get => cornerFraction;
+        set { if (Mathf.Approximately(cornerFraction, value)) return; cornerFraction = value; SetVerticesDirty(); }
+    }
 
     protected override void OnPopulateMesh(VertexHelper mesh)
     {
+        if (NeonGridRendering.Material != null)
+        {
+            NeonGridRendering.Populate(mesh, rectTransform.rect, color, Mathf.Max(0, lineWidth), cornerFraction);
+            return;
+        }
         mesh.Clear();
         Rect rect = rectTransform.rect;
-        float width = Mathf.Min(LineWidth, Mathf.Min(rect.width, rect.height) * 0.5f);
+        float width = Mathf.Min(LineWidth, Mathf.Min(rect.width, rect.height) * .5f);
         if (width <= 0f) return;
-        AddBar(mesh, rect.xMin, rect.yMin, rect.xMax, rect.yMin + width);
-        AddBar(mesh, rect.xMin, rect.yMax - width, rect.xMax, rect.yMax);
-        AddBar(mesh, rect.xMin, rect.yMin + width, rect.xMin + width, rect.yMax - width);
-        AddBar(mesh, rect.xMax - width, rect.yMin + width, rect.xMax, rect.yMax - width);
+        if (cornerFraction >= .5f)
+        {
+            AddBar(mesh, rect.xMin, rect.yMin, rect.xMax, rect.yMin + width);
+            AddBar(mesh, rect.xMin, rect.yMax - width, rect.xMax, rect.yMax);
+            AddBar(mesh, rect.xMin, rect.yMin + width, rect.xMin + width, rect.yMax - width);
+            AddBar(mesh, rect.xMax - width, rect.yMin + width, rect.xMax, rect.yMax - width);
+            return;
+        }
+        float xSegment = Mathf.Max(width, rect.width * cornerFraction);
+        float ySegment = Mathf.Max(width, rect.height * cornerFraction);
+        AddBar(mesh, rect.xMin, rect.yMin, rect.xMin + xSegment, rect.yMin + width);
+        AddBar(mesh, rect.xMax - xSegment, rect.yMin, rect.xMax, rect.yMin + width);
+        AddBar(mesh, rect.xMin, rect.yMax - width, rect.xMin + xSegment, rect.yMax);
+        AddBar(mesh, rect.xMax - xSegment, rect.yMax - width, rect.xMax, rect.yMax);
+        AddBar(mesh, rect.xMin, rect.yMin + width, rect.xMin + width, rect.yMin + ySegment);
+        AddBar(mesh, rect.xMin, rect.yMax - ySegment, rect.xMin + width, rect.yMax - width);
+        AddBar(mesh, rect.xMax - width, rect.yMin + width, rect.xMax, rect.yMin + ySegment);
+        AddBar(mesh, rect.xMax - width, rect.yMax - ySegment, rect.xMax, rect.yMax - width);
     }
 
     private void AddBar(VertexHelper mesh, float left, float bottom, float right, float top)

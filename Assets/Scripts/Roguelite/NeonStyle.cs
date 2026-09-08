@@ -49,7 +49,8 @@ public static class NeonStyle
         var bg = Panel(name,parent,primary ? NeonTheme.T.Primary : NeonTheme.T.Raised,true);
         var b = bg.gameObject.AddComponent<Button>(); b.targetGraphic = bg;
         var c = b.colors; c.normalColor = c.highlightedColor = c.selectedColor = Color.white;
-        c.pressedColor = new Color(.73f,.78f,.69f); c.disabledColor = new Color(.52f,.58f,.56f); c.fadeDuration = NeonTheme.T.pressDuration; b.colors = c;
+        c.pressedColor = new Color(.73f,.78f,.69f); c.disabledColor = new Color(.52f,.58f,.56f); c.fadeDuration = NeonMotion.T.pressDuration; b.colors = c;
+        b.transition = Selectable.Transition.None; // NeonPressFeedback owns the tint clock.
         b.navigation = new Navigation { mode = Navigation.Mode.None };
         var t = Text("Label",b.transform,label,NeonTheme.T.bodySize,primary ? NeonTheme.T.Background : NeonTheme.T.Text);
         t.fontStyle = FontStyles.Bold; Fill(t.rectTransform,32,0,32,0);
@@ -69,19 +70,109 @@ public static class NeonStyle
 /// <summary>Moves only the button's label; target rectangles stay fixed for fast taps.</summary>
 public sealed class NeonPressFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
 {
-    private RectTransform label; private Vector2 origin; private bool pressed;
-    void Awake() { label = GetComponentInChildren<TMP_Text>()?.rectTransform; if(label!=null) origin = label.anchoredPosition; }
-    public void OnPointerDown(PointerEventData e) { if(GetComponent<Button>().interactable) pressed = true; }
-    public void OnPointerUp(PointerEventData e) { pressed = false; }
-    public void OnPointerExit(PointerEventData e) { pressed = false; }
+    private RectTransform label;
+    private Button button;
+    private Vector2 origin, from, target;
+    private float elapsed, duration;
+    private bool moving;
+    private bool pressed;
+    private CanvasRenderer tintRenderer;
+    private Color tint = Color.white, tintFrom = Color.white, tintTo = Color.white;
+    private float tintElapsed, tintDuration;
+    void Awake()
+    {
+        label = GetComponentInChildren<TMP_Text>()?.rectTransform;
+        button = GetComponent<Button>();
+        if (button != null && button.targetGraphic != null) tintRenderer = button.targetGraphic.canvasRenderer;
+        if (label != null) origin = label.anchoredPosition;
+    }
+    public void OnPointerDown(PointerEventData e) { if(button != null && button.IsInteractable()) Retarget(true); }
+    public void OnPointerUp(PointerEventData e) => Retarget(false);
+    public void OnPointerExit(PointerEventData e) => Retarget(false);
+    private void Retarget(bool pressed)
+    {
+        if (label == null) return;
+        this.pressed = pressed;
+        from = label.anchoredPosition;
+        target = origin + (pressed && !NeonTheme.ReducedEffects ? NeonMotion.T.pressOffset : Vector2.zero);
+        duration = Mathf.Max(0, pressed ? NeonMotion.T.pressDuration : NeonMotion.T.releaseDuration);
+        elapsed = 0;
+        moving = true;
+        if (duration <= 0) { label.anchoredPosition = target; moving = false; }
+    }
     void Update()
     {
-        if(label==null)return;
-        Vector2 target=origin+(pressed&&!NeonTheme.ReducedEffects?new Vector2(4,-2):Vector2.zero);
-        if((label.anchoredPosition-target).sqrMagnitude<.0001f)return;
-        label.anchoredPosition=Vector2.Lerp(label.anchoredPosition,target,1-Mathf.Exp(-35*Time.unscaledDeltaTime));
+        float delta = NeonMotion.Delta();
+        if (button != null && tintRenderer != null)
+        {
+            Color desired = !button.IsInteractable() ? button.colors.disabledColor :
+                pressed ? button.colors.pressedColor : button.colors.normalColor;
+            if (desired != tintTo)
+            {
+                tintFrom = tint;
+                tintTo = desired;
+                tintElapsed = 0;
+                tintDuration = Mathf.Max(0, pressed ? NeonMotion.T.pressDuration : NeonMotion.T.releaseDuration);
+            }
+            if (tint != tintTo)
+            {
+                tintElapsed += delta;
+                float colorT = tintDuration <= 0 ? 1 : Mathf.Clamp01(tintElapsed / tintDuration);
+                tint = Color.Lerp(tintFrom, tintTo, NeonMotion.Ease(colorT));
+                tintRenderer.SetColor(tint);
+            }
+        }
+        if (moving && label != null)
+        {
+            elapsed += delta;
+            float t = duration <= 0 ? 1 : Mathf.Clamp01(elapsed / duration);
+            label.anchoredPosition = Vector2.Lerp(from, target, NeonMotion.Ease(t));
+            if (t >= 1) { label.anchoredPosition = target; moving = false; }
+        }
     }
-    void OnDisable() { pressed=false; if(label!=null) label.anchoredPosition=origin; }
+    void OnDisable()
+    {
+        moving = pressed = false;
+        if(label!=null) label.anchoredPosition=origin;
+        tint = tintFrom = tintTo = Color.white;
+        if(tintRenderer!=null) tintRenderer.SetColor(Color.white);
+    }
+}
+
+/// <summary>The ON/OFF value changes immediately; a separate accent acknowledges the toggle.</summary>
+public sealed class NeonToggleFeedback : MonoBehaviour
+{
+    private Toggle toggle;
+    private Image accent;
+    private float elapsed;
+    private bool moving;
+    public void Initialize(Toggle owner)
+    {
+        toggle = owner;
+        accent = NeonMotionAccent.Underline("ToggleAccepted", (RectTransform)transform, NeonTheme.T.Primary);
+        toggle.onValueChanged.AddListener(OnChanged);
+    }
+    private void OnChanged(bool value)
+    {
+        elapsed = 0;
+        moving = true;
+        Render();
+    }
+    private void Update()
+    {
+        if (!moving) return;
+        elapsed += NeonMotion.Delta();
+        Render();
+    }
+    private void Render()
+    {
+        float duration = Mathf.Max(0, NeonMotion.T.releaseDuration);
+        float t = duration <= 0 ? 1 : Mathf.Clamp01(elapsed / duration);
+        NeonMotionAccent.Alpha(accent, (1 - NeonMotion.Ease(t)) * NeonMotionAccent.Strength);
+        if (t >= 1) moving = false;
+    }
+    private void OnDisable() { moving = false; NeonMotionAccent.Alpha(accent, 0); }
+    private void OnDestroy() { if(toggle!=null) toggle.onValueChanged.RemoveListener(OnChanged); }
 }
 
 /// <summary>Recomputes only on physical viewport/inset changes. QA overrides are editor-only.</summary>
@@ -107,16 +198,6 @@ public sealed class NeonSafeArea : MonoBehaviour
     }
 }
 
-/// <summary>A short, nonblocking panel fade. Never owns input locks or simulation time.</summary>
-public sealed class NeonPanelEntrance : MonoBehaviour
-{
-    private CanvasGroup group; private float elapsed;
-    void Awake() { group = gameObject.AddComponent<CanvasGroup>(); }
-    void OnEnable() { elapsed = 0; if(group!=null) group.alpha = NeonTheme.ReducedEffects ? 1 : .35f; }
-    void Update() { if(group==null || group.alpha>=1) return; elapsed+=Time.unscaledDeltaTime; group.alpha=Mathf.Lerp(.35f,1,Mathf.Clamp01(elapsed/NeonTheme.T.enterDuration)); }
-    void OnDisable() { if(group!=null) group.alpha=1; }
-}
-
 /// <summary>Quiet menu-only optical motion; it is never attached to the gameplay grid.</summary>
 public sealed class NeonOpticalMotion : MonoBehaviour
 {
@@ -126,7 +207,7 @@ public sealed class NeonOpticalMotion : MonoBehaviour
     void Update()
     {
         if(NeonTheme.ReducedEffects) { transform.localRotation=basis; return; }
-        elapsed+=Time.unscaledDeltaTime;
+        elapsed+=NeonMotion.Delta();
         transform.localRotation=basis*Quaternion.Euler(0,0,Mathf.Sin(elapsed*.32f)*4);
     }
 }

@@ -15,15 +15,15 @@ MonoBehaviour:
   stableId: neon-reflex-level-036
   levelNumber: 36
   gridSize: 4
-  requiredCorrectClicks: 11
+  requiredCorrectClicks: 38
   timeLimit: 27.65
   completionCoinReward: 120
   reverseEnabled: 1
-  rotateSpeed: 16
+  rotateSpeed: 45
   scaleEnabled: 1
   minimumGridScale: 0.91
   maximumGridScale: 1
-  scaleCycleDuration: 5.9
+  scaleCycleDuration: 2.36
   movementEnabled: 0
   movementSpeedNormalized: 0
   movementTravelPaddingNormalized: 0.03

@@ -1,7 +1,9 @@
 {
   "name": "NeonReflex.EditModeTests",
   "references": [
-    "NeonReflex.Runtime"
+    "NeonReflex.Runtime",
+    "Unity.ugui",
+    "Unity.TextMeshPro"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"

@@ -32,5 +32,3 @@ MonoBehaviour:
   targetStrokeWidth: 6
   cellBoundaryOpacity: 0.18
   controlHeight: 112
-  pressDuration: 0.1
-  enterDuration: 0.2

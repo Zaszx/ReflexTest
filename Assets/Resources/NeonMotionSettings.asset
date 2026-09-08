@@ -1,0 +1,49 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a56b98fd24244b20ba13fb87a2aa163e, type: 3}
+  m_Name: NeonMotionSettings
+  m_EditorClassIdentifier:
+  easing: 2
+  targetRoleDuration: 0.11
+  targetAppearDuration: 0.1
+  targetExitDuration: 0.09
+  targetRoleRetargetDuration: 0.065
+  targetSpawnScale: 0.82
+  targetSpawnAlpha: 0.65
+  targetExitAlpha: 0.35
+  targetExitContraction: 0.08
+  targetRoleGap: 0.06
+  correctCellDuration: 0.16
+  wrongCellDuration: 0.2
+  correctCellTint: 0.22
+  wrongCellTint: 0.32
+  healthDuration: 0.2
+  progressDuration: 0.12
+  resourceDuration: 0.22
+  purchaseDuration: 0.28
+  pressDuration: 0.06
+  releaseDuration: 0.12
+  pressOffset: {x: 4, y: -2}
+  screenDuration: 0.22
+  screenExitDuration: 0.16
+  modalDuration: 0.18
+  modalExitDuration: 0.14
+  modalBackdropLead: 4
+  resultDuration: 0.32
+  resultStagger: 0.045
+  screenTravel: 22
+  modalTravel: 16
+  resultTravel: 16
+  reverseEnterFade: 0.14
+  reverseExitFade: 0.18
+  ruleTravel: 16
+  reducedEffectsStrength: 0.45
