@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,9 +9,7 @@ public sealed partial class GameManager
     private int transitionInputReadyFrame = -1;
     private Color transitionCellFrom, transitionCellTo, transitionTargetFrom, transitionTargetTo;
     private bool transitionReusesCells;
-    private CanvasGroup incomingGridGroup, outgoingGridGroup;
-    private RectTransform outgoingGridRoot;
-    private readonly List<GameSquare> outgoingSquares = new List<GameSquare>();
+    private CanvasGroup incomingGridGroup;
     private Vector3 transitionGridPosition, transitionGridScale;
     private Quaternion transitionGridRotation;
 
@@ -45,42 +42,17 @@ public sealed partial class GameManager
         transitionReusesCells = previous.gridSize == activeLevel.gridSize;
 
         if (!transitionReusesCells)
-        {
-            // Keep the real outgoing visuals, including their current morph,
-            // instead of cloning runtime-only Graphic state or showing a blank grid.
-            outgoingGridRoot = CreateRectTransform("OutgoingLevelGrid", boundsRoot);
-            outgoingGridRoot.anchoredPosition = gridContainer.anchoredPosition;
-            rotationScaleRoot.SetParent(outgoingGridRoot, false);
-            outgoingGridGroup = outgoingGridRoot.gameObject.AddComponent<CanvasGroup>();
-            outgoingGridGroup.blocksRaycasts = false;
-            outgoingGridGroup.interactable = false;
-            foreach (GameSquare cell in instantiatedSquares)
-            {
-                cell.bgImage.raycastTarget = false;
-                cell.SetAnimationsPaused(true);
-                outgoingSquares.Add(cell);
-            }
-            instantiatedSquares.Clear();
-            rotationScaleRoot = gridContentRoot = null;
-        }
+            PrepareGridResize(previous.gridSize, activeLevel.gridSize, oldSide);
 
         ConfigureGridHierarchyAndSize();
-        if (transitionReusesCells)
+        RefitTransitionLayout();
+        var sequence = sessionRun.levelState;
+        for (int i = 0; i < instantiatedSquares.Count; i++)
         {
-            RefitTransitionLayout();
-            var sequence = sessionRun.levelState;
-            for (int i = 0; i < instantiatedSquares.Count; i++)
-            {
-                var role = i == sequence.smallIndex ? GameSquare.LitSize.Small :
-                    i == sequence.mediumIndex ? GameSquare.LitSize.Medium :
-                    i == sequence.largeIndex ? GameSquare.LitSize.Large : GameSquare.LitSize.None;
-                instantiatedSquares[i].BeginLevelPresentation(role, activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale);
-            }
-        }
-        else
-        {
-            BuildGrid();
-            RepairOrRestoreSequence();
+            var role = i == sequence.smallIndex ? GameSquare.LitSize.Small :
+                i == sequence.mediumIndex ? GameSquare.LitSize.Medium :
+                i == sequence.largeIndex ? GameSquare.LitSize.Large : GameSquare.LitSize.None;
+            instantiatedSquares[i].BeginLevelPresentation(role, activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale);
         }
         ApplyGridMotionState(false, 0f);
         // Fitting can canonically clamp motion bounds; checkpoint that exact state.
@@ -90,21 +62,12 @@ public sealed partial class GameManager
         if (incomingGridGroup == null) incomingGridGroup = gridContentRoot.gameObject.AddComponent<CanvasGroup>();
         incomingGridGroup.blocksRaycasts = false;
         incomingGridGroup.interactable = false;
-        if (transitionReusesCells)
-        {
-            transitionGridPosition = rotationScaleRoot.InverseTransformPoint(oldPosition);
-            transitionGridRotation = Quaternion.Inverse(rotationScaleRoot.rotation) * oldRotation;
-            Vector3 destinationScale = rotationScaleRoot.lossyScale;
-            float fitRatio = oldSide / Mathf.Max(1f, baseGridSide);
-            transitionGridScale = new Vector3(oldScale.x / destinationScale.x * fitRatio,
-                oldScale.y / destinationScale.y * fitRatio, 1f);
-        }
-        else
-        {
-            transitionGridPosition = Vector3.zero;
-            transitionGridRotation = Quaternion.identity;
-            transitionGridScale = Vector3.one;
-        }
+        transitionGridPosition = rotationScaleRoot.InverseTransformPoint(oldPosition);
+        transitionGridRotation = Quaternion.Inverse(rotationScaleRoot.rotation) * oldRotation;
+        Vector3 destinationScale = rotationScaleRoot.lossyScale;
+        float fitRatio = oldSide / Mathf.Max(1f, baseGridSide);
+        transitionGridScale = new Vector3(oldScale.x / destinationScale.x * fitRatio,
+            oldScale.y / destinationScale.y * fitRatio, 1f);
         rogueliteUI.BeginLevelTransition(completedLevelNumber, activeLevel, campaign.LevelCount, sessionRun, isDebugSession, sourceNormalTime);
         RenderLevelTransition(0f);
         // Even a zero-duration configuration settles only through the flow owner.
@@ -115,6 +78,7 @@ public sealed partial class GameManager
         int size = Mathf.Max(2, activeLevel.gridSize);
         float spacing = baseGridSide * .025f;
         GridLayoutGroup layout = gridContentRoot.GetComponent<GridLayoutGroup>();
+        layout.constraintCount = size;
         layout.cellSize = Vector2.one * Mathf.Max(1f, (baseGridSide - spacing * (size - 1)) / size);
         layout.spacing = Vector2.one * spacing;
         Canvas.ForceUpdateCanvases();
@@ -144,14 +108,15 @@ public sealed partial class GameManager
         foreach (GameSquare cell in instantiatedSquares)
         {
             cell.SetBasePalette(cellColor, targetColor);
-            if (transitionReusesCells) cell.RenderLevelPresentation(eased);
+            cell.RenderLevelPresentation(eased);
         }
-        foreach (GameSquare cell in outgoingSquares) cell.SetBasePalette(cellColor, targetColor);
-        gridContentRoot.localPosition = Vector3.Lerp(transitionGridPosition, Vector3.zero, eased);
-        gridContentRoot.localRotation = Quaternion.Slerp(transitionGridRotation, Quaternion.identity, eased);
-        gridContentRoot.localScale = Vector3.Lerp(transitionGridScale, Vector3.one, eased);
-        incomingGridGroup.alpha = transitionReusesCells ? 1f : eased;
-        if (outgoingGridGroup != null) outgoingGridGroup.alpha = 1f - eased;
+        foreach (GameSquare cell in retiredGridCells) cell.SetBasePalette(cellColor, targetColor);
+        float pose = transitionReusesCells ? eased : RenderGridResize(progress);
+        gridContentRoot.localPosition = Vector3.Lerp(transitionGridPosition, Vector3.zero, pose);
+        gridContentRoot.localRotation = Quaternion.Slerp(transitionGridRotation, Quaternion.identity, pose);
+        gridContentRoot.localScale = Vector3.Lerp(transitionGridScale, Vector3.one, pose);
+        if (!transitionReusesCells) ContainResizingGrid();
+        incomingGridGroup.alpha = 1f;
         rogueliteUI.RenderLevelTransition(progress, eased);
     }
 
@@ -174,14 +139,7 @@ public sealed partial class GameManager
             incomingGridGroup.blocksRaycasts = true;
             incomingGridGroup.interactable = true;
         }
-        if (outgoingGridRoot != null)
-        {
-            outgoingGridRoot.gameObject.SetActive(false);
-            Destroy(outgoingGridRoot.gameObject);
-        }
-        outgoingSquares.Clear();
-        outgoingGridRoot = null;
-        outgoingGridGroup = null;
+        FinishGridResize();
         levelTransitionActive = false;
         rogueliteUI.EndLevelTransition();
     }

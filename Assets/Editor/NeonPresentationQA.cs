@@ -251,6 +251,14 @@ public static class NeonPresentationQA
             EditorApplication.isPlaying = false;
             yield break;
         }
+        if (command.action == "grid-resize-tests" || command.action == "grid-resize-capture")
+        {
+            yield return NeonGridResizeQA.Run(gm, command.stage, command.action == "grid-resize-capture");
+            Status("grid-resize-complete", "Grid resize checks saved under Artifacts/LevelTransition/" + command.stage);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "level-transition-tests" || command.action == "level-transition-capture")
         {
             yield return NeonLevelTransitionQA.Run(gm, command.stage, command.action == "level-transition-capture");

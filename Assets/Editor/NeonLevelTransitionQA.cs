@@ -63,7 +63,7 @@ public static class NeonLevelTransitionQA
             Configure(fixture, 160, true); yield return Start(gm);
             run = Prime(gm, 0f, true); Tap(gm, true); prepared = JsonUtility.ToJson(run);
             Check(Number(gm.timerText.GetParsedText()) == 0 && !run.levelState.reserveActive && run.currentReserveSeconds == 7.25f, "Reserve completion refills normal display from zero, preserving reserve exactly.");
-            Check(Get<List<GameSquare>>(gm, "instantiatedSquares").Count == 16 && Get<RectTransform>(gm, "outgoingGridRoot") != null, "Different dimensions retain outgoing visuals while preparing the new grid.");
+            Check(Get<List<GameSquare>>(gm, "instantiatedSquares").Count == 16 && Get<UnityEngine.UI.GridLayoutGroup>(gm, "transitionLayout") != null, "Different dimensions resize retained cells while preparing added rows and columns.");
             gm.OpenSettings(); string frozen = Presentation(gm);
             yield return new WaitForSecondsRealtime(.2f);
             Check(Presentation(gm) == frozen && JsonUtility.ToJson(run) == prepared, "Settings freezes counters, transition clock, modifiers and resources.");
@@ -73,7 +73,7 @@ public static class NeonLevelTransitionQA
             Check(Presentation(gm) == frozen && JsonUtility.ToJson(run) == prepared, "Backgrounding freezes the transition without catch-up.");
             Invoke(gm, "OnApplicationPause", false); gm.ReturnToMainMenu();
             yield return new WaitForSecondsRealtime(1.1f);
-            Check(Flow(gm) == "MainMenu" && Get<RectTransform>(gm, "outgoingGridRoot") == null, "Home cancels presentation; no stale callback reopens gameplay.");
+            Check(Flow(gm) == "MainMenu" && Get<UnityEngine.UI.GridLayoutGroup>(gm, "transitionLayout") == null && Get<List<GameSquare>>(gm, "retiredGridCells").Count == 0, "Home cancels presentation; no stale callback reopens gameplay.");
             disk = Get<NeonSaveService>(gm, "saveService").Load(gm.gameConfig).activeRun;
             Check(JsonUtility.ToJson(disk) == prepared, "Home saves the same prepared checkpoint.");
             Get<SaveEnvelopeData>(gm, "saveData").activeRun = disk; gm.ContinueRun();
@@ -147,7 +147,7 @@ public static class NeonLevelTransitionQA
         for (int i = 0; i < frames.Count; i++) { rows.Add(frames[i].row); File.WriteAllBytes(Path.Combine(dir, "frame-" + i.ToString("D4") + ".png"), frames[i].image.EncodeToPNG()); UnityEngine.Object.Destroy(frames[i].image); yield return null; }
         gm.enabled = true; File.WriteAllLines(Path.Combine(dir, "timestamps.csv"), rows);
         Check(readyAt >= .90 && readyAt < 1.25, name + " ready in approximately one second: " + readyAt.ToString("F3") + "s.");
-        Check(Get<RectTransform>(gm, "outgoingGridRoot") == null && !Get<bool>(gm, "levelTransitionActive"), name + " removes obsolete visuals and overrides.");
+        Check(Get<UnityEngine.UI.GridLayoutGroup>(gm, "transitionLayout") == null && Get<List<GameSquare>>(gm, "retiredGridCells").Count == 0 && !Get<bool>(gm, "levelTransitionActive"), name + " removes obsolete visuals and overrides.");
     }
     private static void Check(bool condition, string message)
     {

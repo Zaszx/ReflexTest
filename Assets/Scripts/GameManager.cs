@@ -633,6 +633,8 @@ public sealed partial class GameManager : MonoBehaviour
         // Safe-area and viewport changes refit the existing geometry without
         // rebuilding the sequence or resetting a motion phase.
         if ((boundsRoot.rect.size - lastGridBoundsSize).sqrMagnitude < .1f) return;
+        float priorSide = baseGridSide;
+        float priorShortest = Mathf.Max(1, Mathf.Min(lastGridBoundsSize.x, lastGridBoundsSize.y));
         ConfigureGridHierarchyAndSize();
         int count = Mathf.Max(2, activeLevel.gridSize);
         float spacing = baseGridSide * .025f;
@@ -644,6 +646,15 @@ public sealed partial class GameManager : MonoBehaviour
             layout.spacing = Vector2.one * spacing;
         }
         ApplyGridMotionState(false, 0);
+        if (levelTransitionActive)
+        {
+            float viewportRatio = Mathf.Min(lastGridBoundsSize.x, lastGridBoundsSize.y) / priorShortest;
+            transitionGridPosition *= viewportRatio;
+            float scaleRatio = priorSide * viewportRatio / Mathf.Max(1, baseGridSide);
+            transitionGridScale.x *= scaleRatio;
+            transitionGridScale.y *= scaleRatio;
+            RenderLevelTransition(levelTransitionDuration <= 0 ? 1 : Mathf.Clamp01(levelTransitionElapsed / levelTransitionDuration));
+        }
     }
 
     private static RectTransform CreateRectTransform(string objectName, Transform parent)
@@ -692,24 +703,22 @@ public sealed partial class GameManager : MonoBehaviour
         {
             for (int x = 0; x < size; x++)
             {
-                GameObject cellObject = Instantiate(squarePrefab, gridContentRoot);
-                cellObject.name = $"Square_{x}_{y}";
-                GameSquare square = cellObject.GetComponent<GameSquare>();
-                square.Setup(
-                    x,
-                    y,
-                    solidSquareSprite,
-                    outlineSquareSprite,
-                    activeLevel.cellColor,
-                    activeLevel.outlineColor,
-                    activeLevel.smallScale,
-                    activeLevel.mediumScale,
-                    activeLevel.fullScale);
-                square.onClicked = OnSquareClicked;
-                instantiatedSquares.Add(square);
+                instantiatedSquares.Add(CreateGridCell(x, y));
             }
         }
         Canvas.ForceUpdateCanvases();
+    }
+
+    private GameSquare CreateGridCell(int x, int y)
+    {
+        GameObject cellObject = Instantiate(squarePrefab, gridContentRoot);
+        cellObject.name = $"Square_{x}_{y}";
+        GameSquare square = cellObject.GetComponent<GameSquare>();
+        square.Setup(x, y, solidSquareSprite, outlineSquareSprite,
+            activeLevel.cellColor, activeLevel.outlineColor,
+            activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale);
+        square.onClicked = OnSquareClicked;
+        return square;
     }
 
     private void RepairOrRestoreSequence()
