@@ -15,6 +15,16 @@ MonoBehaviour:
   easing: 2
   levelTransitionDuration: 1
   levelTransitionEasing: 1
+  terminalTransitionDuration: 0.9
+  terminalGridShutdownStartNormalized: 0.13
+  terminalGridShutdownEndNormalized: 0.62
+  terminalReportRevealStartNormalized: 0.33
+  terminalReportRevealEndNormalized: 0.78
+  terminalReportDetailsStartNormalized: 0.61
+  terminalReportDetailsEndNormalized: 0.89
+  terminalReportActionsStartNormalized: 0.72
+  terminalReportActionsEndNormalized: 1
+  terminalReportTravel: 18
   targetRoleDuration: 0.11
   targetAppearDuration: 0.1
   targetExitDuration: 0.09
@@ -25,10 +35,23 @@ MonoBehaviour:
   targetExitContraction: 0.08
   targetRoleGap: 0.06
   correctCellDuration: 0.16
-  wrongCellDuration: 0.2
+  wrongCellDuration: 0.16
   correctCellTint: 0.22
   wrongCellTint: 0.32
+  damageAccentOpacity: 0.82
+  damageAccent: {r: 1, g: 0.502, b: 0.427, a: 1}
   healthDuration: 0.2
+  healthDamageCompression: 0.91
+  floatingDamageDuration: 0.26
+  floatingDamageTravel: 14
+  damageAggregationWindow: 0.18
+  lostHealthGhostOpacity: 0.65
+  reserveExhaustedDuration: 0.22
+  reserveFailureAccentOpacity: 0.9
+  reserveFailureAccent: {r: 1, g: 0.796, b: 0.459, a: 1}
+  damageVignetteDuration: 0.2
+  damageVignetteIntensity: 0.055
+  terminalGridDimMultiplier: 0.22
   progressDuration: 0.12
   resourceDuration: 0.22
   purchaseDuration: 0.28

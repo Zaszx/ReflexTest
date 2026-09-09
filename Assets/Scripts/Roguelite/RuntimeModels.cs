@@ -6,6 +6,7 @@ using UnityEngine;
     public int saveVersion = 2;
     public PlayerProfileData profile = PlayerProfileData.CreateDefault();
     public ActiveRunData activeRun;
+    public RunResultSnapshotData lastRunResult;
     public static SaveEnvelopeData CreateDefault() => new SaveEnvelopeData();
 }
 
@@ -74,4 +75,52 @@ using UnityEngine;
     public long totalEarned;
     public long newWalletBalance;
     public bool campaignCompleted;
+}
+
+/// <summary>Durable copied terminal result; presentation never receives this instance directly.</summary>
+[Serializable] public sealed class RunResultSnapshotData
+{
+    public string runId = string.Empty;
+    public string reason = string.Empty;
+    public int highestLevelEntered;
+    public int levelsCompleted;
+    public long runLevelRewards;
+    public long completionBonus;
+    public long totalEarned;
+    public long newWalletBalance;
+    public bool campaignCompleted;
+    public bool reportPending;
+
+    public static RunResultSnapshotData FromSummary(string runId, RunSummaryData summary)
+    {
+        if (summary == null) return null;
+        return new RunResultSnapshotData
+        {
+            runId = runId ?? string.Empty,
+            reason = summary.reason ?? string.Empty,
+            highestLevelEntered = summary.highestLevelEntered,
+            levelsCompleted = summary.levelsCompleted,
+            runLevelRewards = summary.runLevelRewards,
+            completionBonus = summary.completionBonus,
+            totalEarned = summary.totalEarned,
+            newWalletBalance = summary.newWalletBalance,
+            campaignCompleted = summary.campaignCompleted,
+            reportPending = true
+        };
+    }
+
+    public RunSummaryData ToSummary()
+    {
+        return new RunSummaryData
+        {
+            reason = reason ?? string.Empty,
+            highestLevelEntered = highestLevelEntered,
+            levelsCompleted = levelsCompleted,
+            runLevelRewards = runLevelRewards,
+            completionBonus = completionBonus,
+            totalEarned = totalEarned,
+            newWalletBalance = newWalletBalance,
+            campaignCompleted = campaignCompleted
+        };
+    }
 }

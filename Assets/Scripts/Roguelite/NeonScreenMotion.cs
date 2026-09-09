@@ -17,7 +17,7 @@ public sealed class NeonScreenMotion : MonoBehaviour
     private Vector2 fromOffset;
     private Vector2 toOffset;
     private float fromAlpha, elapsed, duration;
-    private bool visible, animating, inputAllowed, initialized;
+    private bool visible, animating, inputAllowed, initialized, externallyDriven;
     private Action hidden;
     public event Action Settled;
 
@@ -25,6 +25,7 @@ public sealed class NeonScreenMotion : MonoBehaviour
     public bool IsAnimating => animating;
     public bool CoversInput => visible || (kind == Kind.Modal && animating);
     public bool IsReady => visible && !animating && gameObject.activeInHierarchy;
+    public bool IsExternallyDriven => externallyDriven;
     public float Opacity => modalContent != null ? modalContent.alpha : group == null ? 0 : group.alpha;
 
     public void Initialize(RectTransform visualContent, Kind panelKind)
@@ -54,6 +55,7 @@ public sealed class NeonScreenMotion : MonoBehaviour
     public void SetVisible(bool show, Action onHidden = null)
     {
         if (!initialized) return;
+        externallyDriven = false;
         // An external disable can interrupt this owner. Reopening must still
         // reactivate the object, even when its previous desired state was true.
         if (show && visible && !gameObject.activeSelf) visible = false;
@@ -94,6 +96,7 @@ public sealed class NeonScreenMotion : MonoBehaviour
 
     public void SetImmediate(bool show)
     {
+        externallyDriven = false;
         visible = show;
         hidden = null;
         animating = false;
@@ -108,9 +111,48 @@ public sealed class NeonScreenMotion : MonoBehaviour
         if (visible && animating) Finish();
     }
 
+    /// <summary>
+    /// Transfers panel opacity to a normalized parent timeline without starting the
+    /// panel's own entrance/exit animation. Preserving the visual pose is useful for
+    /// outgoing gameplay, whose final geometry must remain exactly where it stopped.
+    /// </summary>
+    public void BeginExternalControl(bool show, bool preserveVisualPose)
+    {
+        if (!initialized) return;
+        externallyDriven = true;
+        visible = show;
+        animating = false;
+        hidden = null;
+        if (show && !gameObject.activeSelf) gameObject.SetActive(true);
+        if (!preserveVisualPose && visual != null) visual.anchoredPosition = origin;
+        ApplyInput();
+    }
+
+    public void SetExternalOpacity(float opacity)
+    {
+        if (!initialized || !externallyDriven) return;
+        SetOpacity(Mathf.Clamp01(opacity));
+        ApplyInput();
+    }
+
+    /// <summary>Releases external ownership and settles the panel to a stable state.</summary>
+    public void EndExternalControl(bool show, bool preserveVisualPose = false)
+    {
+        if (!initialized) return;
+        externallyDriven = false;
+        visible = show;
+        animating = false;
+        hidden = null;
+        if (show && !gameObject.activeSelf) gameObject.SetActive(true);
+        SetOpacity(show ? 1 : 0);
+        if (!preserveVisualPose && visual != null) visual.anchoredPosition = origin;
+        if (!show) gameObject.SetActive(false);
+        ApplyInput();
+    }
+
     private void Update()
     {
-        if (!animating) return;
+        if (!animating || externallyDriven) return;
         elapsed += NeonMotion.Delta();
         float t = duration <= 0 ? 1 : Mathf.Clamp01(elapsed / duration);
         float eased = NeonMotion.Ease(t);
@@ -164,6 +206,7 @@ public sealed class NeonScreenMotion : MonoBehaviour
     private void OnDisable()
     {
         if (!initialized) return;
+        externallyDriven = false;
         bool finishingHidden = !visible && animating;
         Action completion = finishingHidden ? hidden : null;
         animating = false;
@@ -190,21 +233,30 @@ public sealed class NeonResultMotion : MonoBehaviour
         public CanvasGroup group;
         public Vector2 origin;
         public int order;
+        public bool externalOnly;
     }
     private readonly List<Item> items = new List<Item>();
     private float elapsed;
-    private bool playing;
+    private bool playing, externallyDriven;
 
-    public void Add(RectTransform rect, int order)
+    public void Add(RectTransform rect, int order, bool controlsInput = false, bool externalOnly = false)
     {
         var group = rect.gameObject.AddComponent<CanvasGroup>();
-        group.blocksRaycasts = false;
-        group.interactable = false;
-        items.Add(new Item { rect = rect, group = group, origin = rect.anchoredPosition, order = order });
+        group.blocksRaycasts = controlsInput;
+        group.interactable = controlsInput;
+        items.Add(new Item
+        {
+            rect = rect,
+            group = group,
+            origin = rect.anchoredPosition,
+            order = order,
+            externalOnly = externalOnly
+        });
     }
 
     public void Play()
     {
+        externallyDriven = false;
         if (playing) NormalizeImmediate();
         elapsed = 0;
         playing = true;
@@ -223,9 +275,44 @@ public sealed class NeonResultMotion : MonoBehaviour
         }
     }
 
+    public void BeginExternalTimeline()
+    {
+        if (playing) NormalizeImmediate();
+        externallyDriven = true;
+        playing = false;
+    }
+
+    public void RenderExternalTimeline(float hero, float details, float actions, float travel)
+    {
+        if (!externallyDriven) return;
+        hero = NeonMotion.Ease(Mathf.Clamp01(hero));
+        details = NeonMotion.Ease(Mathf.Clamp01(details));
+        actions = NeonMotion.Ease(Mathf.Clamp01(actions));
+        float distance = NeonTheme.ReducedEffects ? 0 : Mathf.Max(0, travel);
+        foreach (var item in items)
+        {
+            float amount = item.order <= 0 ? hero : item.order == 1 ? details : actions;
+            item.group.alpha = amount;
+            item.rect.anchoredPosition = item.origin + new Vector2(0, -(1 - amount) * distance);
+        }
+    }
+
+    public void CompleteExternalTimeline()
+    {
+        if (!externallyDriven) return;
+        externallyDriven = false;
+        NormalizeImmediate();
+    }
+
+    public void CancelExternalTimeline()
+    {
+        externallyDriven = false;
+        NormalizeImmediate();
+    }
+
     private void Update()
     {
-        if (!playing) return;
+        if (!playing || externallyDriven) return;
         elapsed += NeonMotion.Delta();
         Render();
     }
@@ -235,6 +322,12 @@ public sealed class NeonResultMotion : MonoBehaviour
         bool complete = true;
         foreach (var item in items)
         {
+            if (item.externalOnly)
+            {
+                item.rect.anchoredPosition = item.origin;
+                item.group.alpha = 1;
+                continue;
+            }
             float delay = Mathf.Max(0, NeonMotion.T.resultStagger) * item.order;
             float duration = Mathf.Max(0, NeonMotion.T.resultDuration);
             float t = duration <= 0 ? 1 : Mathf.Clamp01((elapsed - delay) / duration);
@@ -247,5 +340,9 @@ public sealed class NeonResultMotion : MonoBehaviour
         if (complete) NormalizeImmediate();
     }
 
-    private void OnDisable() => NormalizeImmediate();
+    private void OnDisable()
+    {
+        externallyDriven = false;
+        NormalizeImmediate();
+    }
 }

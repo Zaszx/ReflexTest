@@ -11,24 +11,42 @@ public sealed class NeonHudMotion : MonoBehaviour
     private Image objectiveFill;
     private Image lostHealth;
     private Image reserveAccent;
-    private RectTransform healthRect;
-    private Vector2 healthOrigin;
+    private TMP_Text floatingDamage;
+    private RectTransform healthTextRect;
+    private RectTransform healthIconRect;
+    private Vector3 healthIconOriginScale, healthIconScaleFrom;
     private bool initialized, hasState, paused;
     private int lastHealth, lastMaximum, lastProgress, lastRequired;
     private bool lastReserve;
-    private float healthElapsed, reserveElapsed, progressElapsed;
-    private bool healthMoving, reserveMoving, progressMoving;
+    private float healthElapsed, reserveElapsed, progressElapsed, floatingDamageElapsed, damageSinceLast;
+    private bool healthMoving, reserveMoving, progressMoving, floatingDamageMoving, terminalPresentation;
+    private int floatingDamageAmount;
     private float ghostEnd, healthRatio;
+    private Vector2 floatingDamageStart;
+    private float floatingDamageStartAlpha;
     private float renderedProgress, progressFrom, progressTo;
 
     public void Initialize(Image healthFill, Image progressFill, TMP_Text healthText,
-        TMP_Text objectiveText, TMP_Text timerLabel, TMP_Text reserveText, Image timerFill)
+        TMP_Text objectiveText, TMP_Text timerLabel, TMP_Text reserveText, Image timerFill,
+        RectTransform healthIcon = null)
     {
         if (initialized) return;
         initialized = true;
         objectiveFill = progressFill;
-        healthRect = healthText == null ? null : healthText.rectTransform;
-        if (healthRect != null) healthOrigin = healthRect.anchoredPosition;
+        healthTextRect = healthText == null ? null : healthText.rectTransform;
+        healthIconRect = healthIcon;
+        if (healthIconRect != null) healthIconOriginScale = healthIconScaleFrom = healthIconRect.localScale;
+        if (healthTextRect != null)
+        {
+            floatingDamage = NeonStyle.Text("FloatingDamage", healthTextRect.parent, "", Mathf.Min(22f, healthText.fontSize),
+                NeonTheme.T.Danger, TextAlignmentOptions.Center);
+            RectTransform labelRect = floatingDamage.rectTransform;
+            labelRect.anchorMin = labelRect.anchorMax = new Vector2(0f, .5f);
+            labelRect.pivot = new Vector2(.5f, .5f);
+            labelRect.sizeDelta = new Vector2(60f, 32f);
+            labelRect.anchoredPosition = new Vector2(92f, 24f);
+            floatingDamage.gameObject.SetActive(false);
+        }
         if (healthFill != null)
         {
             lostHealth = NeonMotionAccent.Create("LostHealth", healthFill.transform.parent, NeonTheme.T.Danger);
@@ -67,11 +85,9 @@ public sealed class NeonHudMotion : MonoBehaviour
                 ClearDamage();
             else if (safeHealth < lastHealth)
             {
-                // One reusable trailing segment merges rapid losses. It can
-                // never cover the remaining, authoritative health segment.
-                ghostEnd = healthMoving ? Mathf.Max(ghostEnd, healthRatio) : healthRatio;
-                healthElapsed = 0f;
-                healthMoving = true;
+                // State is authoritative and immediate. The caller starts the
+                // one cosmetic response after refreshing this latest snapshot.
+                ghostEnd = healthMoving ? Mathf.Max(ghostEnd, healthRatio, nextHealth) : Mathf.Max(healthRatio, nextHealth);
             }
             healthRatio = nextHealth;
 
@@ -107,26 +123,107 @@ public sealed class NeonHudMotion : MonoBehaviour
 
     public void SetPaused(bool value) { paused = value; }
 
+    /// <summary>
+    /// Starts one bounded cosmetic response for already-committed health loss.
+    /// Call after SetState so the displayed number is already authoritative.
+    /// </summary>
+    public void PlayHealthDamage(int amount = 1)
+    {
+        if (!initialized || !isActiveAndEnabled || amount <= 0) return;
+        if (lostHealth != null)
+        {
+            Color accent = NeonMotion.T.damageAccent;
+            accent.a = lostHealth.color.a;
+            lostHealth.color = accent;
+        }
+        ghostEnd = Mathf.Max(ghostEnd, healthRatio);
+        healthElapsed = 0f;
+        healthMoving = NeonMotion.T.healthDuration > 0f;
+        if (!healthMoving) ClearDamage();
+
+        if (!floatingDamageMoving || damageSinceLast > NeonMotion.T.damageAggregationWindow)
+            floatingDamageAmount = 0;
+        floatingDamageAmount = Mathf.Clamp(floatingDamageAmount + amount, 1, 99);
+        damageSinceLast = 0f;
+        if (healthIconRect != null) healthIconScaleFrom = healthIconRect.localScale;
+        if (floatingDamage != null)
+        {
+            floatingDamageStart = floatingDamageMoving ? floatingDamage.rectTransform.anchoredPosition : new Vector2(92f, 24f);
+            floatingDamageStartAlpha = floatingDamageMoving ? floatingDamage.color.a
+                : NeonMotion.T.damageAccentOpacity * NeonMotionAccent.Strength;
+        }
+        floatingDamageElapsed = 0f;
+        floatingDamageMoving = NeonMotion.T.floatingDamageDuration > 0f;
+        if (floatingDamage != null)
+        {
+            floatingDamage.SetText("−{0}", floatingDamageAmount);
+            floatingDamage.gameObject.SetActive(floatingDamageMoving);
+        }
+        RenderMotion();
+    }
+
+    /// <summary>Reserve-only terminal cue; it never alters health feedback.</summary>
+    public void PlayReserveExhausted()
+    {
+        if (!initialized || !isActiveAndEnabled) return;
+        if (reserveAccent != null)
+        {
+            Color accent = NeonMotion.T.reserveFailureAccent;
+            accent.a = 0f;
+            reserveAccent.color = accent;
+        }
+        reserveElapsed = 0f;
+        reserveMoving = NeonMotion.T.reserveExhaustedDuration > 0f;
+        RenderMotion();
+    }
+
+    /// <summary>Stops obsolete HUD tracks while retaining an in-flight final health cue.</summary>
+    public void BeginTerminalPresentation(bool reserveFailure)
+    {
+        terminalPresentation = true;
+        progressMoving = false;
+        if (reserveFailure)
+        {
+            // A timeout must not inherit a nearby health-loss label or ghost.
+            ClearDamage();
+            floatingDamageMoving = false;
+            floatingDamageAmount = 0;
+            if (floatingDamage != null) floatingDamage.gameObject.SetActive(false);
+            PlayReserveExhausted();
+        }
+        else reserveMoving = false;
+    }
+
+    public void EndTerminalPresentation()
+    {
+        terminalPresentation = false;
+        NormalizeImmediate();
+    }
+
     /// <summary>Settle the current view and make the next snapshot a fresh baseline.</summary>
     public void NormalizeImmediate()
     {
         hasState = false;
         ClearDamage();
         reserveMoving = progressMoving = false;
-        healthElapsed = reserveElapsed = progressElapsed = 0f;
+        floatingDamageMoving = false;
+        healthElapsed = reserveElapsed = progressElapsed = floatingDamageElapsed = damageSinceLast = 0f;
         renderedProgress = progressTo;
         SetProgress(renderedProgress);
         NeonMotionAccent.Alpha(reserveAccent, 0f);
+        if (floatingDamage != null) floatingDamage.gameObject.SetActive(false);
     }
 
     private void Update()
     {
-        if (!initialized || !hasState || (!healthMoving && !reserveMoving && !progressMoving)) return;
+        if (!initialized || !hasState || (!healthMoving && !reserveMoving && !progressMoving && !floatingDamageMoving)) return;
         float delta = NeonMotion.Delta(paused);
         if (delta <= 0f) return;
         if (healthMoving) healthElapsed += delta;
         if (reserveMoving) reserveElapsed += delta;
         if (progressMoving) progressElapsed += delta;
+        if (floatingDamageMoving) floatingDamageElapsed += delta;
+        if (floatingDamageMoving) damageSinceLast += delta;
         RenderMotion();
     }
 
@@ -149,25 +246,47 @@ public sealed class NeonHudMotion : MonoBehaviour
                 rect.anchorMin = new Vector2(healthRatio, 0f);
                 rect.anchorMax = new Vector2(Mathf.Max(healthRatio, ghostEnd), 1f);
                 rect.offsetMin = rect.offsetMax = Vector2.zero;
-                NeonMotionAccent.Alpha(lostHealth, strength * .78f * NeonMotionAccent.Strength);
+                NeonMotionAccent.Alpha(lostHealth, strength * NeonMotion.T.lostHealthGhostOpacity * NeonMotionAccent.Strength);
             }
-            if (healthRect != null)
+            if (healthIconRect != null)
             {
-                float offset = NeonTheme.ReducedEffects ? 0f : Mathf.Sin(t * Mathf.PI) * strength * 4f;
-                healthRect.anchoredPosition = healthOrigin + new Vector2(offset, 0f);
+                float pulse = Mathf.Sin(t * Mathf.PI);
+                float compression = NeonTheme.ReducedEffects ? 1f : Mathf.Lerp(1f, NeonMotion.T.healthDamageCompression, pulse);
+                Vector3 target = healthIconOriginScale * compression;
+                healthIconRect.localScale = Vector3.Lerp(healthIconScaleFrom, target, NeonMotion.Ease(Mathf.Min(1f, t * 4f)));
             }
             if (t >= 1f) ClearDamage();
         }
         if (reserveMoving)
         {
-            float t = NeonMotionAccent.Fraction(reserveElapsed, NeonMotion.T.resourceDuration);
+            float duration = terminalPresentation ? NeonMotion.T.reserveExhaustedDuration : NeonMotion.T.resourceDuration;
+            float t = NeonMotionAccent.Fraction(reserveElapsed, duration);
             float eased = NeonMotion.Ease(t);
             if (reserveAccent != null)
             {
                 reserveAccent.rectTransform.anchorMin = new Vector2(Mathf.Lerp(.72f, 0f, eased), 0f);
-                NeonMotionAccent.Alpha(reserveAccent, (1f - eased) * .9f * NeonMotionAccent.Strength);
+                float opacity = terminalPresentation ? NeonMotion.T.reserveFailureAccentOpacity : .9f;
+                NeonMotionAccent.Alpha(reserveAccent, (1f - eased) * opacity * NeonMotionAccent.Strength);
             }
             if (t >= 1f) { reserveMoving = false; NeonMotionAccent.Alpha(reserveAccent, 0f); }
+        }
+        if (floatingDamageMoving)
+        {
+            float t = NeonMotionAccent.Fraction(floatingDamageElapsed, NeonMotion.T.floatingDamageDuration);
+            if (floatingDamage != null)
+            {
+                RectTransform rect = floatingDamage.rectTransform;
+                float rise = Mathf.Min(14f, NeonMotion.T.floatingDamageTravel);
+                rect.anchoredPosition = Vector2.Lerp(floatingDamageStart, new Vector2(92f, 24f + rise), NeonMotion.Ease(t));
+                Color tint = NeonMotion.T.damageAccent;
+                tint.a = Mathf.Lerp(floatingDamageStartAlpha, 0f, NeonMotion.Ease(t));
+                floatingDamage.color = tint;
+            }
+            if (t >= 1f)
+            {
+                floatingDamageMoving = false;
+                if (floatingDamage != null) floatingDamage.gameObject.SetActive(false);
+            }
         }
     }
 
@@ -184,7 +303,7 @@ public sealed class NeonHudMotion : MonoBehaviour
         healthMoving = false;
         ghostEnd = healthRatio;
         NeonMotionAccent.Alpha(lostHealth, 0f);
-        if (healthRect != null) healthRect.anchoredPosition = healthOrigin;
+        if (healthIconRect != null) healthIconRect.localScale = healthIconOriginScale;
     }
 
     private void OnDisable() { NormalizeImmediate(); }

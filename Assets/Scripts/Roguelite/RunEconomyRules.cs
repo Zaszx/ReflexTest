@@ -44,6 +44,7 @@ public static class RunEconomyRules
             newWalletBalance = balance,
             campaignCompleted = campaignCompleted
         };
+        envelope.lastRunResult = RunResultSnapshotData.FromSummary(run.runId, summary);
         envelope.activeRun = null;
         return true;
     }

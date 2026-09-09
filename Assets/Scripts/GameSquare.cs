@@ -22,6 +22,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
 
     private PrecisionCellFrame targetFrame;
     private PrecisionCellFrame retiringFrame;
+    private PrecisionCellFrame errorFrame;
     private Color baseCellColor, targetColor;
     private Color feedbackStart;
     private float smallScale = .4f, mediumScale = .7f, fullScale = 1f;
@@ -29,7 +30,9 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     private float roleStartScale, roleStartAlpha, roleTargetScale, roleElapsed, roleDuration;
     private float exitStartScale, exitStartAlpha, exitElapsed, exitDuration, exitContraction;
     private float feedbackElapsed, feedbackDuration;
-    private bool targetAnimating, exitActive, feedbackActive;
+    private float errorElapsed, errorDuration, terminalShutdown;
+    private Color terminalRetiringColor;
+    private bool targetAnimating, exitActive, feedbackActive, errorActive, terminalPresentation;
     private bool consumedForNextAssignment, animationsPaused;
     private bool levelPresentationActive;
     private float levelOutgoingScale, levelOutgoingAlpha;
@@ -41,6 +44,36 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     public bool HasRetiringVisual => exitActive;
 
     public void SetAnimationsPaused(bool paused) => animationsPaused = paused;
+
+    /// <summary>
+    /// Freezes this cell's role at its currently rendered pose for an outgoing
+    /// run presentation. It never settles or changes the logical target role.
+    /// Damage feedback remains independently eligible to finish.
+    /// </summary>
+    public void BeginTerminalPresentation()
+    {
+        terminalPresentation = true;
+        targetAnimating = false;
+        // Keep an accepted target's outgoing mesh exactly where it was. The
+        // terminal shutdown owns only its opacity, not its role or transform.
+        if (retiringFrame != null && exitActive) terminalRetiringColor = retiringFrame.color;
+    }
+
+    /// <summary>Applies a cosmetic shutdown multiplier without moving the cell or its hitbox.</summary>
+    public void SetTerminalShutdown(float progress)
+    {
+        terminalShutdown = Mathf.Clamp01(progress);
+        ApplyCurrentAppearance();
+    }
+
+    /// <summary>Returns this reusable cell to normal cosmetic ownership.</summary>
+    public void EndTerminalPresentation()
+    {
+        terminalPresentation = false;
+        terminalShutdown = 0f;
+        if (retiringFrame != null && exitActive) retiringFrame.color = terminalRetiringColor;
+        ApplyCurrentAppearance();
+    }
 
     public static Color CellPalette(Color levelColor)
     {
@@ -55,10 +88,11 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         baseCellColor = fill;
         targetColor = outline;
         feedbackActive = false;
-        bgImage.color = fill;
+        ApplyCurrentAppearance();
         if (targetFrame != null)
         {
-            Color tint = outline; tint.a = renderedAlpha;
+            Color tint = outline * Mathf.Lerp(1f, NeonMotion.T.terminalGridDimMultiplier, terminalShutdown);
+            tint.a = renderedAlpha * (1f - terminalShutdown);
             targetFrame.color = tint;
         }
         if (levelPresentationActive && retiringFrame != null)
@@ -133,6 +167,17 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             retiringFrame.transform.SetAsFirstSibling();
             retiringFrame.CornerFraction = .22f;
         }
+        if (errorFrame == null)
+        {
+            // A permanent inner frame keeps wrong-tap feedback local while
+            // leaving the role-defining outline and hit surface untouched.
+            errorFrame = CreateFrame("DamageOutline", bgImage.rectTransform);
+            errorFrame.transform.SetAsLastSibling();
+            errorFrame.rectTransform.anchorMin = new Vector2(.10f, .10f);
+            errorFrame.rectTransform.anchorMax = new Vector2(.90f, .90f);
+            errorFrame.CornerFraction = .82f;
+        }
+        errorFrame.gameObject.SetActive(false);
         NormalizePresentation();
     }
 
@@ -216,8 +261,12 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         feedbackDuration = Mathf.Max(0f, correct ? NeonMotion.T.correctCellDuration : NeonMotion.T.wrongCellDuration);
         feedbackElapsed = 0f;
         feedbackActive = feedbackDuration > 0f;
-        bgImage.color = feedbackActive ? feedbackStart : baseCellColor;
+        if (correct) ClearErrorLayer(); else BeginErrorLayer();
+        bgImage.color = feedbackActive ? feedbackStart : CurrentBaseColor();
     }
+
+    /// <summary>Explicit name for terminal callers; equivalent to a wrong tap cosmetic only.</summary>
+    public void PlayDamageFeedback() => PlayTapFeedback(false);
 
     // Compatibility only: target-directed pulses would reveal the answer.
     public void PlayAttentionPulse(float delay = 0f) { }
@@ -228,7 +277,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     public void AdvancePresentation(float delta)
     {
         if (animationsPaused || delta <= 0f || !gameObject.activeInHierarchy) return;
-        if (targetAnimating)
+        if (targetAnimating && !terminalPresentation)
         {
             roleElapsed += delta;
             float t = Mathf.Clamp01(roleElapsed / roleDuration);
@@ -236,7 +285,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             RenderTarget(Mathf.Lerp(roleStartScale, roleTargetScale, eased), Mathf.Lerp(roleStartAlpha, 1f, eased));
             if (t >= 1f) SettleTarget();
         }
-        if (exitActive)
+        if (exitActive && !terminalPresentation)
         {
             exitElapsed += delta;
             float t = Mathf.Clamp01(exitElapsed / exitDuration);
@@ -254,8 +303,18 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             feedbackElapsed += delta;
             float t = Mathf.Clamp01(feedbackElapsed / feedbackDuration);
             float eased = NeonMotion.Ease(t);
-            bgImage.color = Color.Lerp(feedbackStart, baseCellColor, eased);
+            bgImage.color = Color.Lerp(feedbackStart, CurrentBaseColor(), eased);
             if (t >= 1f) feedbackActive = false;
+        }
+        if (errorActive)
+        {
+            errorElapsed += delta;
+            float t = NeonMotionAccent.Fraction(errorElapsed, errorDuration);
+            Color tint = NeonMotion.T.damageAccent;
+            tint.a = (1f - NeonMotion.Ease(t)) * NeonMotion.T.wrongCellOutlineOpacity * NeonMotionAccent.Strength;
+            if (terminalPresentation) tint.a *= 1f - terminalShutdown;
+            errorFrame.color = tint;
+            if (t >= 1f) ClearErrorLayer();
         }
     }
 
@@ -267,8 +326,9 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     {
         consumedForNextAssignment = false;
         feedbackActive = false;
+        ClearErrorLayer();
         CancelExit();
-        if (bgImage != null) bgImage.color = baseCellColor;
+        if (bgImage != null) bgImage.color = CurrentBaseColor();
         if (settleTargets) SettleTarget();
     }
 
@@ -320,8 +380,8 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         if (targetFrame != null)
         {
             targetFrame.LineWidth = NeonTheme.T.targetStrokeWidth / Mathf.Max(.001f, scale);
-            Color tint = targetColor;
-            tint.a = alpha;
+            Color tint = targetColor * Mathf.Lerp(1f, NeonMotion.T.terminalGridDimMultiplier, terminalShutdown);
+            tint.a = alpha * (1f - terminalShutdown);
             targetFrame.color = tint;
         }
     }
@@ -335,6 +395,42 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             case LitSize.Large: return fullScale;
             default: return 0f;
         }
+    }
+
+    private Color CurrentBaseColor()
+    {
+        return Color.Lerp(baseCellColor, NeonTheme.T.Background, terminalShutdown * (1f - NeonMotion.T.terminalGridDimMultiplier));
+    }
+
+    private void ApplyCurrentAppearance()
+    {
+        if (bgImage != null && !feedbackActive) bgImage.color = CurrentBaseColor();
+        RenderTarget(renderedScale, renderedAlpha);
+        if (terminalPresentation && retiringFrame != null && exitActive)
+        {
+            Color tint = terminalRetiringColor;
+            tint.a *= 1f - terminalShutdown;
+            retiringFrame.color = tint;
+        }
+    }
+
+    private void BeginErrorLayer()
+    {
+        if (errorFrame == null) return;
+        errorDuration = Mathf.Max(0f, NeonMotion.T.wrongCellDuration);
+        errorElapsed = 0f;
+        errorActive = errorDuration > 0f;
+        if (!errorActive) { ClearErrorLayer(); return; }
+        errorFrame.gameObject.SetActive(true);
+        Color tint = NeonMotion.T.damageAccent;
+        tint.a = NeonMotion.T.wrongCellOutlineOpacity * NeonMotionAccent.Strength;
+        errorFrame.color = tint;
+    }
+
+    private void ClearErrorLayer()
+    {
+        errorActive = false;
+        if (errorFrame != null) errorFrame.gameObject.SetActive(false);
     }
 
     private static PrecisionCellFrame CreateFrame(string name, RectTransform parent)

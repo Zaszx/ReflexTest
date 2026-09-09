@@ -529,6 +529,97 @@ public sealed class NeonReflexRulesEditModeTests
         finally { Directory.Delete(directory, true); }
     }
 
+    [Test]
+    public void TerminalTransactionCapturesAnIndependentPendingResultSnapshot()
+    {
+        SaveEnvelopeData envelope = SaveEnvelopeData.CreateDefault();
+        envelope.profile.coins = 10;
+        envelope.activeRun = CreateRun(8f, 3f);
+        envelope.activeRun.runId = "snapshot-run";
+        envelope.activeRun.currentLevelIndex = 2;
+        envelope.activeRun.levelsCompleted = 2;
+        envelope.activeRun.pendingCoins = 12;
+
+        Assert.That(RunEconomyRules.TryBankAndClearActiveRun(
+            envelope, "snapshot-run", "HEALTH DEPLETED", false, 0, 100, out RunSummaryData summary), Is.True);
+        Assert.That(envelope.activeRun, Is.Null);
+        Assert.That(envelope.profile.coins, Is.EqualTo(22));
+        Assert.That(envelope.lastRunResult.runId, Is.EqualTo("snapshot-run"));
+        Assert.That(envelope.lastRunResult.reportPending, Is.True);
+
+        summary.reason = "MUTATED PRESENTATION";
+        summary.newWalletBalance = 999;
+        RunSummaryData restored = envelope.lastRunResult.ToSummary();
+        Assert.That(restored.reason, Is.EqualTo("HEALTH DEPLETED"));
+        Assert.That(restored.newWalletBalance, Is.EqualTo(22));
+        Assert.That(restored, Is.Not.SameAs(envelope.lastRunResult));
+    }
+
+    [Test]
+    public void PendingSnapshotRoundTripsInProfileOnlySaveAndAcknowledgementPersists()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            var service = new NeonSaveService(directory);
+            SaveEnvelopeData envelope = SaveEnvelopeData.CreateDefault();
+            envelope.activeRun = CreateRun(8f, 3f);
+            envelope.activeRun.runId = "pending-report-run";
+            envelope.activeRun.pendingCoins = 9;
+            Assert.That(RunEconomyRules.TryBankAndClearActiveRun(
+                envelope, "pending-report-run", "RESERVE DEPLETED", false, 0, 100, out _), Is.True);
+            service.Save(envelope, config);
+
+            SaveEnvelopeData restored = service.Load(config);
+            Assert.That(restored.activeRun, Is.Null);
+            Assert.That(restored.lastRunResult.reportPending, Is.True);
+            Assert.That(restored.lastRunResult.ToSummary().reason, Is.EqualTo("RESERVE DEPLETED"));
+            long historicBalance = restored.lastRunResult.newWalletBalance;
+            restored.profile.coins = historicBalance + 20;
+            restored.lastRunResult.reportPending = false;
+            service.Save(restored, config);
+
+            restored = service.Load(config);
+            Assert.That(restored.lastRunResult.reportPending, Is.False);
+            Assert.That(restored.lastRunResult.newWalletBalance, Is.EqualTo(historicBalance));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Test]
+    public void LegacyEnvelopeWithoutSnapshotLoadsAndSnapshotSurvivesPrimaryBackupAndTempRecovery()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            var service = new NeonSaveService(directory);
+            SaveEnvelopeData legacy = SaveEnvelopeData.CreateDefault();
+            legacy.profile.coins = 5;
+            service.Save(legacy, config);
+            Assert.That(service.Load(config).lastRunResult, Is.Null);
+            File.WriteAllText(service.PrimaryPath, "{\"saveVersion\":2,\"profile\":{\"saveVersion\":2},\"lastRunResult\":{}}");
+            Assert.That(service.Load(config).lastRunResult, Is.Null);
+
+            SaveEnvelopeData envelope = SaveEnvelopeData.CreateDefault();
+            envelope.activeRun = CreateRun(8f, 3f);
+            envelope.activeRun.runId = "recovery-snapshot-run";
+            envelope.activeRun.pendingCoins = 14;
+            Assert.That(RunEconomyRules.TryBankAndClearActiveRun(
+                envelope, "recovery-snapshot-run", "HEALTH DEPLETED", false, 0, 100, out _), Is.True);
+            service.Save(envelope, config);
+            service.Save(envelope, config); // Establish a backup containing the committed result.
+            File.WriteAllText(service.TempPath, "staged but incomplete");
+            Assert.That(service.Load(config).lastRunResult.runId, Is.EqualTo("recovery-snapshot-run"));
+
+            File.WriteAllText(service.PrimaryPath, "corrupt primary");
+            SaveEnvelopeData recovered = service.Load(config);
+            Assert.That(recovered.activeRun, Is.Null);
+            Assert.That(recovered.lastRunResult.runId, Is.EqualTo("recovery-snapshot-run"));
+            Assert.That(recovered.lastRunResult.reportPending, Is.True);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private static ActiveRunData CreateRun(float normal, float reserve)
     {
         return new ActiveRunData

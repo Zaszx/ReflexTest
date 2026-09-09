@@ -246,6 +246,41 @@ public sealed class GameSquareMotionEditModeTests
     }
 
     [Test]
+    public void TerminalFreezePreservesCurrentRolePoseWhileItsDamageLayerCanSettle()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        cell.SetLitSize(GameSquare.LitSize.Small, true);
+        cell.AdvancePresentation(.02f);
+        float scale = cell.RenderedScale;
+        float alpha = cell.RenderedAlpha;
+        cell.PlayDamageFeedback();
+        cell.BeginTerminalPresentation();
+        cell.SetTerminalShutdown(.5f);
+        cell.AdvancePresentation(.3f);
+        Assert.That(cell.RenderedScale, Is.EqualTo(scale));
+        Assert.That(cell.RenderedAlpha, Is.EqualTo(alpha));
+        PrecisionCellFrame damage = cell.bgImage.transform.Find("DamageOutline").GetComponent<PrecisionCellFrame>();
+        Assert.That(damage.raycastTarget, Is.False);
+        Assert.That(damage.gameObject.activeSelf, Is.False, "The finite localized damage layer settles during terminal shutdown.");
+    }
+
+    [Test]
+    public void TerminalShutdownFadesButDoesNotRemoveAnAcceptedRetiringOutline()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        cell.PlayConsumedFeedback();
+        cell.AdvancePresentation(.02f);
+        PrecisionCellFrame retiring = cell.bgImage.transform.Find("RetiringTarget").GetComponent<PrecisionCellFrame>();
+        float alpha = retiring.color.a;
+        Vector3 scale = retiring.rectTransform.localScale;
+        cell.BeginTerminalPresentation();
+        cell.SetTerminalShutdown(.5f);
+        Assert.That(cell.HasRetiringVisual, Is.True);
+        Assert.That(retiring.rectTransform.localScale, Is.EqualTo(scale));
+        Assert.That(retiring.color.a, Is.EqualTo(alpha * .5f).Within(.0001f));
+    }
+
+    [Test]
     public void DisableCallbackNormalizesLatestRoleAndCannotReplayObsoleteExitOnReenable()
     {
         GameSquare cell = Create(GameSquare.LitSize.Small);

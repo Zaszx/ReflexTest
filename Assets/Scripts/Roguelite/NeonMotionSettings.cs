@@ -11,6 +11,18 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Min(0)] public float levelTransitionDuration = 1f;
     public BoundedEase levelTransitionEasing = BoundedEase.SmoothStep;
 
+    [Header("Run-ending presentation / seconds and normalized timeline")]
+    [Min(0)] public float terminalTransitionDuration = .9f;
+    [Range(0, 1)] public float terminalGridShutdownStartNormalized = .13f;
+    [Range(0, 1)] public float terminalGridShutdownEndNormalized = .62f;
+    [Range(0, 1)] public float terminalReportRevealStartNormalized = .33f;
+    [Range(0, 1)] public float terminalReportRevealEndNormalized = .78f;
+    [Range(0, 1)] public float terminalReportDetailsStartNormalized = .61f;
+    [Range(0, 1)] public float terminalReportDetailsEndNormalized = .89f;
+    [Range(0, 1)] public float terminalReportActionsStartNormalized = .72f;
+    [Range(0, 1)] public float terminalReportActionsEndNormalized = 1f;
+    [Min(0)] public float terminalReportTravel = 18f;
+
     [Header("Target roles / seconds")]
     [Min(0)] public float targetRoleDuration = .11f;
     [Min(0)] public float targetAppearDuration = .10f;
@@ -24,10 +36,24 @@ public sealed class NeonMotionSettings : ScriptableObject
 
     [Header("Accepted input and resources / seconds")]
     [Min(0)] public float correctCellDuration = .16f;
-    [Min(0)] public float wrongCellDuration = .20f;
+    [Min(0)] public float wrongCellDuration = .16f;
     [Range(0, .5f)] public float correctCellTint = .22f;
     [Range(0, .5f)] public float wrongCellTint = .32f;
+    [Range(0, 1)] public float wrongCellOutlineOpacity = .82f;
+    [Range(0, 1)] public float damageAccentOpacity = .82f;
+    public Color damageAccent = new Color(1f, .502f, .427f, 1f);
     [Min(0)] public float healthDuration = .20f;
+    [Range(.5f, 1f)] public float healthDamageCompression = .91f;
+    [Min(0)] public float floatingDamageDuration = .26f;
+    [Range(0, 14)] public float floatingDamageTravel = 14f;
+    [Min(0)] public float damageAggregationWindow = .18f;
+    [Range(0, 1)] public float lostHealthGhostOpacity = .65f;
+    [Min(0)] public float reserveExhaustedDuration = .22f;
+    [Range(0, 1)] public float reserveFailureAccentOpacity = .9f;
+    public Color reserveFailureAccent = new Color(1f, .796f, .459f, 1f);
+    [Min(0)] public float damageVignetteDuration = .20f;
+    [Range(0, 1)] public float damageVignetteIntensity = .055f;
+    [Range(0, 1)] public float terminalGridDimMultiplier = .22f;
     [Min(0)] public float progressDuration = .12f;
     [Min(0)] public float resourceDuration = .22f;
     [Min(0)] public float purchaseDuration = .28f;

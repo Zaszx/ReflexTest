@@ -91,7 +91,8 @@ public sealed partial class RogueliteUIController : MonoBehaviour
     {
         panel.SetActive(true);
         foreach(Transform child in panel.transform) { child.gameObject.SetActive(false); Destroy(child.gameObject); }
-        var bg=panel.GetComponent<Image>();if(bg==null)bg=panel.AddComponent<Image>();bg.sprite=null;bg.color=T.Background;bg.raycastTarget=true;
+        var bg=panel.GetComponent<Image>();if(bg==null)bg=panel.AddComponent<Image>();bg.sprite=null;
+        bg.color=panel==gm.settingsPanel ? new Color(.004f,.011f,.022f,.9f) : T.Background;bg.raycastTarget=true;
         foreach(var effect in panel.GetComponents<BaseMeshEffect>()) Destroy(effect);
         Fill((RectTransform)panel.transform);
         var safe=Rect("SafeContent",panel.transform); Fill(safe); safe.gameObject.AddComponent<NeonSafeArea>();
@@ -126,6 +127,7 @@ public sealed partial class RogueliteUIController : MonoBehaviour
     }
     public void ShowBaseScreen(GameObject destination)
     {
+        CancelRunEnding();
         SetBasePanels(destination);
         HideShop();
         HideAbandonConfirmation();
@@ -142,6 +144,31 @@ public sealed partial class RogueliteUIController : MonoBehaviour
         RefreshInputLayers();
     }
     public void SetGameplayFeedbackPaused(bool paused) { if (!levelTransitionActive || paused) hudMotion?.SetPaused(paused); }
+    public void PlayHealthDamageFeedback() => hudMotion?.PlayHealthDamage(1);
+    public void BeginTerminalHudFeedback(bool reserveFailure)
+    {
+        hudMotion?.BeginTerminalPresentation(reserveFailure);
+        terminalTimerTint = gm.timerText.color;
+        terminalDialTint = timeDial.color;
+    }
+    public void RenderTerminalHudShutdown(float amount)
+    {
+        if (timerGlow != null)
+        {
+            Color glow = terminalTimerTint;
+            glow.a = .48f * (1f - Mathf.Clamp01(amount));
+            timerGlow.SetColor("_UnderlayColor", glow);
+        }
+        Color dial = terminalDialTint;
+        dial.a *= 1f - Mathf.Clamp01(amount) * .8f;
+        timeDial.color = dial;
+    }
+    public void EndTerminalHudFeedback()
+    {
+        hudMotion?.EndTerminalPresentation();
+        SetTimerGlow(terminalTimerTint);
+        timeDial.color = terminalDialTint;
+    }
     public void NormalizeGameplayFeedback() { if (!levelTransitionActive) hudMotion?.NormalizeImmediate(); }
     public void SettleGameplayEntrance()
     {
@@ -290,42 +317,6 @@ public sealed partial class RogueliteUIController : MonoBehaviour
         if(rule!=null) { rule.color=PlayCyan; ruleRail.color=PlayCyan; }
     }
 
-    private void CreateSettings()
-    {
-        Eyebrow(settings,"NEON REFLEX / PREFERENCES");
-        settingsHeading=Txt("Title",settings,"SETTINGS",T.headingSize,T.pageMargin,-202,940,114);settingsHeading.fontStyle=FontStyles.Bold;
-        Txt("Intro",settings,"Make yourself comfortable.",34,T.pageMargin,-334,900,60,T.Muted);
-        Hairline(settings,464);
-        hapticsToggle=SettingRow(settings,"Haptic feedback","A tactile cue on supported devices.",530,false);
-        hapticsToggle.onValueChanged.AddListener(v=>hapticsChanged?.Invoke(v));gm.hapticToggle=hapticsToggle;gm.sfxVolumeSlider=null;
-        reducedToggle=SettingRow(settings,"Reduced effects","Quieter transitions and feedback.\nGrid motion and game rules stay the same.",790,true);
-        reducedToggle.SetIsOnWithoutNotify(NeonTheme.ReducedEffects);reducedToggle.onValueChanged.AddListener(v=>NeonTheme.ReducedEffects=v);
-        Txt("SettingsNote",settings,"Your run waits here.\nHealth, time and motion pause together.",30,T.pageMargin,-1170,910,120,T.Muted).textWrappingMode=TextWrappingModes.Normal;
-        gm.settingsCloseButton=WideButton("CloseSettings",settings,"DONE",116,true);
-    }
-    private Toggle SettingRow(Transform parent,string title,string description,float y,bool reduced)
-    {
-        Txt("SettingTitle",parent,title,38,T.pageMargin,-y,690,70).fontStyle=FontStyles.Bold;
-        var d=Txt("SettingDescription",parent,description,29,T.pageMargin,-y-84,720,114,T.Muted);d.textWrappingMode=TextWrappingModes.Normal;
-        var bg=Panel(reduced?"ReducedEffectsToggle":"HapticsToggle",parent,T.Raised,true);At(bg.rectTransform,1,1,-150,-y-46,174,96);
-        var toggle=bg.gameObject.AddComponent<Toggle>();toggle.targetGraphic=bg;toggle.navigation=new Navigation{mode=Navigation.Mode.None};
-        toggle.transition = Selectable.Transition.None;
-        toggle.toggleTransition = Toggle.ToggleTransition.None;
-        var on=Panel("On",bg.transform,T.Primary);Fill(on.rectTransform,6,6,6,6);toggle.graphic=on;
-        var label=Text("State",bg.transform,"OFF",27,T.Text,TextAlignmentOptions.Center);Fill(label.rectTransform);
-        toggle.onValueChanged.AddListener(v=>{label.text=v?"ON":"OFF";label.color=v?T.Background:T.Text;});
-        bg.gameObject.AddComponent<NeonToggleFeedback>().Initialize(toggle);
-        return toggle;
-    }
-    public void SetHaptics(bool enabled)
-    {
-        hapticsToggle.SetIsOnWithoutNotify(enabled);
-        var text=hapticsToggle.GetComponentInChildren<TMP_Text>();text.text=enabled?"ON":"OFF";text.color=enabled?T.Background:T.Text;
-        if(reducedToggle!=null){bool on=NeonTheme.ReducedEffects;reducedToggle.SetIsOnWithoutNotify(on);var rt=reducedToggle.GetComponentInChildren<TMP_Text>();rt.text=on?"ON":"OFF";rt.color=on?T.Background:T.Text;}
-    }
-    public void RefreshSettings(bool duringGameplay)
-    { settingsHeading.text=duringGameplay?"PAUSED":"SETTINGS";ButtonText(gm.settingsCloseButton,duringGameplay?"RESUME":"DONE");RefreshInputLayers(); }
-
     public void RefreshInputLayers()
     {
         // A newly enabled Graphic has depth -1 until Unity renders it. Disable
@@ -343,7 +334,7 @@ public sealed partial class RogueliteUIController : MonoBehaviour
     }
     private void SetInput(GameObject panel,bool allowed)
     {
-        if (panel != null && screens.TryGetValue(panel, out var motion)) motion.SetInputAllowed(allowed);
+        if (panel != null && screens.TryGetValue(panel, out var motion)) motion.SetInputAllowed(allowed && TerminalAllowsInput(panel));
     }
 
     private ResultView CreateResult(RectTransform root,bool success)

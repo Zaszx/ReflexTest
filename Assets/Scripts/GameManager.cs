@@ -21,6 +21,7 @@ public sealed partial class GameManager : MonoBehaviour
         ReverseExit,
         LevelComplete,
         LevelTransition,
+        RunEnding,
         RunSummary,
         Shop,
         Settings
@@ -151,7 +152,7 @@ public sealed partial class GameManager : MonoBehaviour
         }
 #endif
 
-        ShowMainMenu();
+        if (!RestoreCommittedRunReport()) ShowMainMenu();
     }
 
     private bool InitializeConfiguration()
@@ -311,6 +312,11 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void Update()
     {
+        if (runEndingActive)
+        {
+            AdvanceRunEndingPresentation(NeonMotion.Delta(applicationSuspended || state != FlowState.RunEnding));
+            return;
+        }
         if (levelTransitionActive)
         {
             AdvanceLevelTransition(NeonMotion.TransitionDelta());
@@ -404,6 +410,7 @@ public sealed partial class GameManager : MonoBehaviour
             upgrades = snapshot
         };
         saveData.activeRun = sessionRun;
+        saveData.lastRunResult = null;
         isDebugSession = false;
         terminalRequested = false;
         InitializeCurrentLevelState();
@@ -489,6 +496,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void EnterCurrentLevel(bool showIntroduction, bool restoring)
     {
+        CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         StopDamageFlash();
@@ -628,6 +636,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void LateUpdate()
     {
+        if (runEndingActive) return;
         if (activeLevel == null || boundsRoot == null || gridContentRoot == null || !gameplayPanel.activeInHierarchy)
             return;
         // Safe-area and viewport changes refit the existing geometry without
@@ -770,25 +779,26 @@ public sealed partial class GameManager : MonoBehaviour
         int correctIndex = levelState.reverseActive ? levelState.smallIndex : levelState.largeIndex;
         if (clickedIndex != correctIndex)
         {
-            square.PlayTapFeedback(false);
-            HandleMistake();
+            HandleMistake(square);
             return;
         }
 
         HandleCorrectTap();
     }
 
-    private void HandleMistake()
+    private void HandleMistake(GameSquare originatingCell)
     {
-        TriggerScreenFlash(false);
         sessionRun.currentHealth = Mathf.Max(0, sessionRun.currentHealth - 1);
-        if (sessionRun.levelState.reverseActive)
-            feedbackController.PlayReverseMistake();
         UpdateGameplayUI();
-        SaveRealRunCritical();
+        originatingCell.PlayDamageFeedback();
+        rogueliteUI.PlayHealthDamageFeedback();
+        TriggerScreenFlash(false);
+        TriggerHaptic();
 
         if (sessionRun.currentHealth <= 0)
             FailRun("HEALTH DEPLETED");
+        else
+            SaveRealRunCritical();
     }
 
     private void HandleCorrectTap()
@@ -942,17 +952,21 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void FailRun(string reason)
     {
-        if (terminalRequested)
+        if (terminalRequested || sessionRun == null)
             return;
 
         if (isDebugSession)
         {
             terminalRequested = true;
-            state = FlowState.RunSummary;
             presentationToken++;
             feedbackController.ResetImmediate();
-            rogueliteUI.ShowDebugRunEnded(reason, sessionRun, activeLevel.levelNumber);
             ConfigureFailPrimary("RETURN TO MENU", ReturnToMainMenu);
+            var snapshot = new RunSummaryData { reason = reason };
+            int practiceLevel = activeLevel != null ? activeLevel.levelNumber : sessionRun.currentLevelIndex + 1;
+            int correct = sessionRun.levelState.objectiveProgress;
+            sessionRun = null;
+            activeLevel = null;
+            BeginRunEndingPresentation(snapshot, true, practiceLevel, correct);
             return;
         }
 
@@ -975,19 +989,12 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void EndRealRun(string reason, bool campaignCompleted, long completionBonus)
     {
-        CancelLevelTransitionPresentation();
-        if (terminalRequested && state == FlowState.RunSummary)
+        if (runEndingActive || (terminalRequested && state == FlowState.RunSummary))
             return;
         if (sessionRun == null)
             sessionRun = saveData.activeRun;
         if (sessionRun == null)
             return;
-
-        terminalRequested = true;
-        state = FlowState.RunSummary;
-        presentationToken++;
-        feedbackController.ResetImmediate();
-        SetSquareAnimationsPaused(false);
 
         if (!RunEconomyRules.TryBankAndClearActiveRun(
                 saveData,
@@ -1001,7 +1008,12 @@ public sealed partial class GameManager : MonoBehaviour
             Debug.LogError("Run terminal transaction was rejected because the active run identity changed.");
             return;
         }
+        terminalRequested = true;
+        presentationToken++;
+        // This one save commits wallet, cleared active run and copied report.
+        // No animation callback participates in the terminal transaction.
         SaveEnvelopeCritical();
+        displayedCommittedRunId = saveData.lastRunResult.runId;
         sessionRun = null;
         activeLevel = null;
         isDebugSession = false;
@@ -1013,7 +1025,16 @@ public sealed partial class GameManager : MonoBehaviour
         {
             ConfigureFailPrimary("UPGRADES", OpenUpgradeShop);
         }
-        rogueliteUI.ShowRunSummary(summary);
+        if (IsDepletionFailure(reason) && gameplayPanel.activeInHierarchy && instantiatedSquares.Count > 0)
+            BeginRunEndingPresentation(summary);
+        else
+        {
+            CancelLevelTransitionPresentation();
+            feedbackController.ResetImmediate();
+            StopDamageFlash();
+            state = FlowState.RunSummary;
+            rogueliteUI.ShowRunSummary(summary);
+        }
     }
 
     private void ConfigureFailPrimary(string label, UnityEngine.Events.UnityAction action)
@@ -1136,6 +1157,8 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void ReturnToMainMenu()
     {
+        AcknowledgeCommittedRunReport();
+        CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         StopDamageFlash();
@@ -1162,6 +1185,8 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void ShowMainMenu()
     {
+        AcknowledgeCommittedRunReport();
+        CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         state = FlowState.MainMenu;
@@ -1189,6 +1214,8 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void OpenUpgradeShop()
     {
+        AcknowledgeCommittedRunReport();
+        CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
         if (state == FlowState.Shop)
         {
@@ -1362,15 +1389,15 @@ public sealed partial class GameManager : MonoBehaviour
             return;
         if (flashCoroutine != null)
             StopCoroutine(flashCoroutine);
-        Color damage = NeonTheme.T.Danger;
-        damage.a = .055f;
+        Color damage = NeonMotion.T.damageAccent;
+        damage.a = Mathf.Clamp01(NeonMotion.T.damageVignetteIntensity);
         flashCoroutine = StartCoroutine(AnimateFlash(damage));
     }
 
     private IEnumerator AnimateFlash(Color flashColor)
     {
-        float inDuration = Mathf.Min(.04f, Mathf.Max(0, NeonMotion.T.healthDuration) * .2f);
-        float outDuration = Mathf.Max(0, NeonMotion.T.healthDuration) - inDuration;
+        float inDuration = Mathf.Min(.04f, Mathf.Max(0, NeonMotion.T.damageVignetteDuration) * .2f);
+        float outDuration = Mathf.Max(0, NeonMotion.T.damageVignetteDuration) - inDuration;
         Color start = flashOverlay.color;
         float elapsed = 0f;
         while (elapsed < inDuration)

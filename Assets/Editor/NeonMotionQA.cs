@@ -177,9 +177,11 @@ public static class NeonMotionQA
 
     private static void Tap(GameManager gm,bool correct)
     {
-        var state=RunData(gm).levelState;
+        var state=RunData(gm)?.levelState;
         var squares=Get<List<GameSquare>>(gm,"instantiatedSquares");
-        int index=correct?(state.reverseActive?state.smallIndex:state.largeIndex):state.mediumIndex;
+        // Terminal input is deliberately sent to the retained outgoing cell,
+        // even though the authoritative active-run reference is already cleared.
+        int index=state==null?0:correct?(state.reverseActive?state.smallIndex:state.largeIndex):state.mediumIndex;
         var pointer=new PointerEventData(EventSystem.current){button=PointerEventData.InputButton.Left,position=RectTransformUtility.WorldToScreenPoint(null,squares[index].transform.position)};
         ExecuteEvents.Execute(squares[index].gameObject,pointer,ExecuteEvents.pointerDownHandler);
     }
@@ -285,7 +287,7 @@ public static class NeonMotionQA
         gm.CloseSettings();yield return Ready(gm);
         CheckPointerSurface(gm,"Input after modal exit");
         run.currentHealth=1;Tap(gm,false);long banked=data.profile.coins;
-        Check(run.currentHealth==0 && Flow(gm)=="RunSummary","Fatal damage ends the run immediately before its cosmetic cue completes.");
+        Check(run.currentHealth==0 && (Flow(gm)=="RunEnding" || Flow(gm)=="RunSummary"),"Fatal damage ends the run immediately before its cosmetic cue completes.");
         Tap(gm,true);Tap(gm,false);yield return new WaitForSecondsRealtime(.4f);
         Check(run.levelState.objectiveProgress==before && data.profile.coins==banked,"Post-fatal taps and late effects neither advance objectives nor duplicate banking.");
 
@@ -311,7 +313,7 @@ public static class NeonMotionQA
         yield return new WaitForSecondsRealtime(.12f);
         Check(run.levelState.reserveActive && run.currentReserveSeconds<1.98f && Flow(gm)=="Playing","Reserve activation and drain occur while target feedback is still active.");
         run.currentReserveSeconds=.01f;Tap(gm,false);yield return null;yield return null;
-        Check(Flow(gm)=="RunSummary","Zero reserve ends the run without waiting for damage or resource tweens.");
+        Check(Flow(gm)=="RunEnding" || Flow(gm)=="RunSummary","Zero reserve ends the run without waiting for damage or resource tweens.");
         gm.ReturnToMainMenu();
         Check(JsonUtility.ToJson(data)==realBefore,"All debug motion fixtures leave the isolated real-profile envelope unchanged.");
 

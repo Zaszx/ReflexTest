@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using System.Reflection;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -8,6 +9,7 @@ public sealed class NeonHudMotionEditModeTests
     private GameObject root;
     private NeonHudMotion hud;
     private Image primaryHealth, objective, timer;
+    private TMP_Text healthText;
     private NeonMotionSettings originalSettings, isolatedSettings;
     private static readonly FieldInfo SettingsField = typeof(NeonMotion).GetField("settings", BindingFlags.Static | BindingFlags.NonPublic);
 
@@ -28,8 +30,9 @@ public sealed class NeonHudMotionEditModeTests
         timer = Track("Timer");
         primaryHealth.rectTransform.anchorMax = new Vector2(.8f, 1f);
         timer.rectTransform.anchorMax = new Vector2(.47f, 1f);
+        healthText = NeonStyle.Text("HealthText", root.transform, "", 23f, NeonTheme.T.Text);
         hud = root.AddComponent<NeonHudMotion>();
-        hud.Initialize(primaryHealth, objective, null, null, null, null, timer);
+        hud.Initialize(primaryHealth, objective, healthText, null, null, null, timer);
     }
 
     [TearDown]
@@ -45,7 +48,9 @@ public sealed class NeonHudMotionEditModeTests
     {
         hud.SetState(5, 5, 0, 10, false);
         hud.SetState(4, 5, 1, 10, false);
+        hud.PlayHealthDamage();
         hud.SetState(3, 5, 2, 10, false);
+        hud.PlayHealthDamage();
         Image ghost = primaryHealth.transform.parent.Find("LostHealth").GetComponent<Image>();
         Assert.That(ghost.rectTransform.anchorMin.x, Is.EqualTo(.6f).Within(.0001f));
         Assert.That(ghost.rectTransform.anchorMax.x, Is.EqualTo(1f));
@@ -82,6 +87,7 @@ public sealed class NeonHudMotionEditModeTests
         NeonMotion.T.resourceDuration = 0f;
         hud.SetState(5, 5, 0, 10, false);
         hud.SetState(1, 5, 7, 10, true);
+        hud.PlayHealthDamage(4);
         Image ghost = primaryHealth.transform.parent.Find("LostHealth").GetComponent<Image>();
         Assert.That(ghost.color.a, Is.Zero);
         Assert.That(objective.rectTransform.anchorMax.x, Is.EqualTo(.7f).Within(.0001f));
@@ -89,6 +95,19 @@ public sealed class NeonHudMotionEditModeTests
         hud.SetState(1, 5, 7, 10, true);
         Assert.That(ghost.color.a, Is.Zero, "A restored snapshot must not replay damage.");
         Assert.That(objective.rectTransform.anchorMax.x, Is.EqualTo(.7f).Within(.0001f));
+    }
+
+    [Test]
+    public void ExplicitDamageAggregatesOneReusableLabelAfterImmediateSnapshots()
+    {
+        hud.SetState(5, 5, 0, 10, false);
+        hud.SetState(4, 5, 0, 10, false); hud.PlayHealthDamage();
+        hud.SetState(2, 5, 0, 10, false); hud.PlayHealthDamage(2);
+        TMP_Text label = root.transform.Find("FloatingDamage").GetComponent<TMP_Text>();
+        Assert.That(label.text, Is.EqualTo("−3"));
+        Assert.That(label.raycastTarget, Is.False);
+        Assert.That(label.rectTransform.anchoredPosition, Is.EqualTo(new Vector2(92f, 24f)));
+        Assert.That(root.GetComponentsInChildren<TMP_Text>(true).Length, Is.EqualTo(2));
     }
 
     private Image Track(string name)

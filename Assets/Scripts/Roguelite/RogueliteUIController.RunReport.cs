@@ -112,8 +112,11 @@ public sealed partial class RogueliteUIController
         gm.failMenuButton = ReportButton(root, "ResultHome", "RETURN HOME", 1608, 134, false);
         gm.failLevelText = v.title; gm.failReasonText = v.reason;
         v.motion = root.gameObject.AddComponent<NeonResultMotion>();
-        v.motion.Add(hero, 0); v.motion.Add(earnings.rectTransform, 1);
-        v.motion.Add(left, 2); v.motion.Add(right, 2); v.motion.Add(balance.rectTransform, 2);
+        v.motion.Add(hero, 0);
+        v.motion.Add(earnings.rectTransform, 1); v.motion.Add(left, 1);
+        v.motion.Add(right, 1); v.motion.Add(balance.rectTransform, 1);
+        v.motion.Add((RectTransform)gm.failPrimaryButton.transform, 2, true, true);
+        v.motion.Add((RectTransform)gm.failMenuButton.transform, 2, true, true);
         return v;
     }
 

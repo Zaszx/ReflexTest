@@ -15,6 +15,7 @@ public sealed partial class RogueliteUIController
     private static readonly Color PlayPink = NeonTheme.Hex("F461D3");
     private NeonGameplayGraphic healthSegments, healthSymbol, timeDial, ruleSymbol, ruleFrame;
     private Material timerGlow;
+    private Color terminalTimerTint, terminalDialTint;
 
     private static NeonGameplayGraphic GameplayArt(string name, Transform parent, NeonGameplayGraphic.Kind kind, Color tint)
     {
@@ -106,7 +107,7 @@ public sealed partial class RogueliteUIController
         footer.characterSpacing = 7; footer.alignment = TextAlignmentOptions.Center;
 
         hudMotion = play.gameObject.AddComponent<NeonHudMotion>();
-        hudMotion.Initialize(healthFill, progressFill, health, objective, timerLabel, reserve, timerFill);
+        hudMotion.Initialize(healthFill, progressFill, health, objective, timerLabel, reserve, timerFill, healthSymbol.rectTransform);
         var transitionPanel = GameplayArt("LevelTransition", play, NeonGameplayGraphic.Kind.Panel, PlayCyan);
         transitionRect = transitionPanel.rectTransform; At(transitionRect, .5f, .5f, 0, -70, 620, 112);
         transitionGroup = transitionPanel.gameObject.AddComponent<CanvasGroup>(); transitionGroup.alpha = 0;

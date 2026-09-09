@@ -118,7 +118,7 @@ public static class NeonPresentationQA
             return;
         }
         if (!test.FullName.Contains("LegacyProgressMigrationRunsOnceAndPreservesHaptics") &&
-            (test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonMotion", StringComparison.Ordinal) || test.FullName.StartsWith("NeonHudMotion", StringComparison.Ordinal) || test.FullName.StartsWith("GameSquareMotionEditModeTests.", StringComparison.Ordinal)))
+            (test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonMotion", StringComparison.Ordinal) || test.FullName.StartsWith("NeonHudMotion", StringComparison.Ordinal) || test.FullName.StartsWith("GameSquareMotionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("TerminalFreshInputGateEditModeTests.", StringComparison.Ordinal)))
             names.Add(test.FullName);
     }
 
@@ -206,6 +206,23 @@ public static class NeonPresentationQA
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
+        if (command.action == "settings-capture")
+        {
+            yield return NeonSettingsQA.Run(gm, name => Capture(directory, name, gm), Check);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("settings-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "damage-ending-tests" || command.action == "damage-ending-capture")
+        {
+            yield return NeonDamageEndingQA.Run(gm, command.stage, command.action == "damage-ending-capture");
+            Status("damage-ending-complete", "Checks and frame sequences saved under Artifacts/DamageEnding/" + command.stage);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "run-report-capture")
         {
             yield return NeonRunReportQA.Run(gm, name => Capture(directory, name, gm), Check);
