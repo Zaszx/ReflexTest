@@ -72,7 +72,7 @@ public static class NeonMotionQA
         run.levelState.reverseCooldownRemaining=999;
         run.levelState.objectiveProgress=gm.campaign.GetLevel(run.currentLevelIndex).requiredCorrectClicks-1;
         Invoke(gm,"UpdateGameplayUI");
-        yield return Record(gm,directory,"05-level-complete",1.5f,
+        yield return Record(gm,directory,"05-level-complete",NeonMotion.T.levelTransitionDuration + .7f,
             new Cue(.25f,"final correct tap",()=>Tap(gm,true)));
         gm.ReturnToMainMenu();
         Invoke(gm,"ConfirmAbandonRun");

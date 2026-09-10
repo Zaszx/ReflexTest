@@ -21,11 +21,11 @@ public sealed partial class GameManager
         runEndingElapsed = 0f;
         runEndingDuration = Mathf.Max(0f, NeonMotion.T.terminalTransitionDuration);
         if (introCoroutine != null) { StopCoroutine(introCoroutine); introCoroutine = null; }
-        feedbackController.ResetImmediate();
         foreach (GameSquare cell in instantiatedSquares)
             if (cell != null) cell.BeginTerminalPresentation();
         bool reserveFailure = result.reason == "RESERVE DEPLETED";
         if (reserveFailure) StopDamageFlash();
+        feedbackController.BeginTerminalFeedback(reserveFailure);
         rogueliteUI.BeginTerminalHudFeedback(reserveFailure);
         SetSquareAnimationsPaused(applicationSuspended);
         rogueliteUI.BeginRunEnding(result, practice, practiceLevel, practiceCorrect);
@@ -107,6 +107,7 @@ public sealed partial class GameManager
 
     private void OnDestroy()
     {
+        ReleasePracticeLevels();
         runEndingActive = false;
         runEndingToken = -1;
         if (Instance == this) Instance = null;

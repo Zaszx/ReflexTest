@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9ce4f4d99c9c41e5ad4bb6c1e9b86a71, type: 3}
+  m_Name: LevelTransitionAnnouncementSettings
+  m_EditorClassIdentifier:
+  entranceDuration: 0.2
+  holdDuration: 1.4
+  exitDuration: 0.2
+  motivationLines:
+  - Good job!
+  - Keep going!
+  - Nicely done!
+  - Keep it up!
+  - Stay sharp!
+  - You’ve got this!
+  - Keep the rhythm!
+  - On to the next!
+  - Stay focused!
+  - Next challenge!
+  rotationChallenge: Can you keep up as it rotates?
+  moveChallenge: Can you keep up as it moves?
+  scaleChallenge: Can you keep up as it changes size?
+  combinedMotionChallenge: Can you keep up with the changing grid?

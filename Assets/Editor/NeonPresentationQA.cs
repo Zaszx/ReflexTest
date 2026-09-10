@@ -83,6 +83,7 @@ public static class NeonPresentationQA
         string profileDirectory = Path.Combine(ProjectRoot, ".utmp", "neon-ui-profile-" + Guid.NewGuid().ToString("N"));
         var envelope = SaveEnvelopeData.CreateDefault();
         envelope.profile.legacyMigrationComplete = true;
+        envelope.profile.hasStartedRealRun = command.action != "onboarding-capture";
         new NeonSaveService(profileDirectory).Save(envelope);
         SessionState.SetString(NeonPresentationQAProfile.SessionKey, profileDirectory);
         SessionState.SetString(PendingKey, JsonUtility.ToJson(command));
@@ -118,7 +119,7 @@ public static class NeonPresentationQA
             return;
         }
         if (!test.FullName.Contains("LegacyProgressMigrationRunsOnceAndPreservesHaptics") &&
-            (test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonMotion", StringComparison.Ordinal) || test.FullName.StartsWith("NeonHudMotion", StringComparison.Ordinal) || test.FullName.StartsWith("GameSquareMotionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("TerminalFreshInputGateEditModeTests.", StringComparison.Ordinal)))
+            (test.FullName.StartsWith("NeonTap", StringComparison.Ordinal) || test.FullName.StartsWith("LevelTransitionAnnouncementEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("OnboardingProfileEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonMotion", StringComparison.Ordinal) || test.FullName.StartsWith("NeonHudMotion", StringComparison.Ordinal) || test.FullName.StartsWith("GameSquareMotionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("TerminalFreshInputGateEditModeTests.", StringComparison.Ordinal)))
             names.Add(test.FullName);
     }
 
@@ -206,11 +207,39 @@ public static class NeonPresentationQA
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
+        if (command.action == "tap-feedback-regression")
+        {
+            yield return NeonDamageEndingQA.Run(gm, command.stage, false);
+            yield return NeonLevelTransitionQA.Run(gm, command.stage, false);
+            yield return NeonGridResizeQA.Run(gm, command.stage, false);
+            yield return NeonOnboardingQA.Run(gm, name => Capture(directory, name, gm), Check, false);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("tap-regression-complete", directory);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "tap-feedback-tests")
+        {
+            yield return NeonTapFeedbackQA.Run(gm, name => Capture(directory, name, gm), Check);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("tap-feedback-complete", directory);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "settings-capture")
         {
             yield return NeonSettingsQA.Run(gm, name => Capture(directory, name, gm), Check);
             File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
             Status("settings-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
+        if (command.action == "onboarding-capture")
+        {
+            yield return NeonOnboardingQA.Run(gm, name => Capture(directory, name, gm), Check, command.full);
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("onboarding-complete", directory);
             SessionState.EraseString(PendingKey);
             EditorApplication.isPlaying = false;
             yield break;

@@ -1,0 +1,73 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4c8a3a1b2c4465ca581b66e9c49d3bf, type: 3}
+  m_Name: NeonOnboardingSettings
+  m_EditorClassIdentifier:
+  followCorrectTaps: 5
+  healthCorrectTaps: 4
+  levelSeconds: 3
+  reserveSeconds: 6
+  reserveDrainSeconds: 2
+  zeroTimeHoldSeconds: 0.35
+  instructionFadeSeconds: 0.18
+  firstTap:
+    title: "Tap the <color=#59EFFF>largest outline.</color>"
+    body: ""
+    action: ""
+  follow:
+    title: "Good! Keep tapping the <color=#59EFFF>largest outline.</color>"
+    body: ""
+    action: ""
+  healthIntro:
+    title: "Mistakes cost <color=#ACF35F>1 health.</color>"
+    body: "Zero health ends the run.\nHealth carries between levels."
+    action: "NEXT"
+  healthPractice:
+    title: "Keep following the <color=#59EFFF>largest outline.</color>"
+    body: "Mistakes cost 1 health. You've got this."
+    action: ""
+  healthRetry:
+    title: "Out of practice health."
+    body: "In a real run, zero health ends it.\nLet's try just this part again."
+    action: "TRY AGAIN"
+  timeIntro:
+    title: "Complete the tap goal before <color=#FFD05B>level time</color> runs out."
+    body: "Each level starts with fresh time."
+    action: "WATCH TIMER"
+  timeCountdown:
+    title: "Watch <color=#FFD05B>level time</color> reach zero."
+    body: "A short demonstration — no tapping needed."
+    action: ""
+  reserveIntro:
+    title: "When level time runs out, <color=#FFD05B>reserve takes over.</color>"
+    body: "Watch the shared reserve start to drain."
+    action: "WATCH RESERVE"
+  reserveCountdown:
+    title: "Your <color=#FFD05B>reserve</color> is now being used."
+    body: ""
+    action: ""
+  reserveCarry:
+    title: "<color=#FFD05B>Reserve</color> carries between levels."
+    body: "It does not refill automatically.\nEmpty reserve ends the run."
+    action: "NEXT"
+  nextLevel:
+    title: "Next level. <color=#59EFFF>Fresh time.</color>"
+    body: "Watch health and reserve stay the same."
+    action: ""
+  carrySummary:
+    title: "Fresh time. Same <color=#ACF35F>health</color> and <color=#FFD05B>reserve.</color>"
+    body: "Your resources carry through the run."
+    action: "GOT IT"
+  ready:
+    title: "You're ready."
+    body: "Start your first run."
+    action: "START RUN"

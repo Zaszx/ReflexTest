@@ -23,6 +23,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     private PrecisionCellFrame targetFrame;
     private PrecisionCellFrame retiringFrame;
     private PrecisionCellFrame errorFrame;
+    private PrecisionCellFrame successFrame;
     private Color baseCellColor, targetColor;
     private Color feedbackStart;
     private float smallScale = .4f, mediumScale = .7f, fullScale = 1f;
@@ -31,8 +32,9 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     private float exitStartScale, exitStartAlpha, exitElapsed, exitDuration, exitContraction;
     private float feedbackElapsed, feedbackDuration;
     private float errorElapsed, errorDuration, terminalShutdown;
+    private float successElapsed, successDuration;
     private Color terminalRetiringColor;
-    private bool targetAnimating, exitActive, feedbackActive, errorActive, terminalPresentation;
+    private bool targetAnimating, exitActive, feedbackActive, errorActive, successActive, terminalPresentation;
     private bool consumedForNextAssignment, animationsPaused;
     private bool levelPresentationActive;
     private float levelOutgoingScale, levelOutgoingAlpha;
@@ -42,6 +44,23 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     public float RetiringAlpha => retiringFrame != null && exitActive ? retiringFrame.color.a : 0f;
     public bool IsTargetAnimating => targetAnimating;
     public bool HasRetiringVisual => exitActive;
+
+    /// <summary>
+    /// Copies the four corners of the currently visible target perimeter into
+    /// <paramref name="corners" in world space. Call this before consuming or
+    /// reassigning the target; it deliberately reports the rendered transform,
+    /// including any grid motion, rotation, and target-role scale.
+    /// </summary>
+    public bool TryGetRenderedOutlineCorners(Vector3[] corners)
+    {
+        if (corners == null || corners.Length < 4 || outlineImage == null ||
+            currentLitSize == LitSize.None || renderedScale <= 0f || renderedAlpha <= 0f ||
+            !outlineImage.gameObject.activeInHierarchy)
+            return false;
+
+        outlineImage.rectTransform.GetWorldCorners(corners);
+        return true;
+    }
 
     public void SetAnimationsPaused(bool paused) => animationsPaused = paused;
 
@@ -88,6 +107,8 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         baseCellColor = fill;
         targetColor = outline;
         feedbackActive = false;
+        ClearErrorLayer();
+        ClearSuccessLayer();
         ApplyCurrentAppearance();
         if (targetFrame != null)
         {
@@ -178,6 +199,20 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             errorFrame.CornerFraction = .82f;
         }
         errorFrame.gameObject.SetActive(false);
+        if (successFrame == null)
+        {
+            // Success is an independent acknowledgement layer. It never owns,
+            // recolors, or resizes either role-defining target frame.
+            successFrame = CreateFrame("SuccessOutline", bgImage.rectTransform);
+            successFrame.transform.SetAsLastSibling();
+            successFrame.rectTransform.anchorMin = new Vector2(.16f, .16f);
+            successFrame.rectTransform.anchorMax = new Vector2(.84f, .84f);
+            // Tiny corner ticks acknowledge a hit without resembling another
+            // actionable Small or retired target outline.
+            successFrame.CornerFraction = .08f;
+            successFrame.LineWidth = NeonTheme.T.targetStrokeWidth;
+        }
+        successFrame.gameObject.SetActive(false);
         NormalizePresentation();
     }
 
@@ -254,14 +289,14 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         if (bgImage == null || !gameObject.activeInHierarchy) return;
         float intensity = correct ? NeonMotion.T.correctCellTint : NeonMotion.T.wrongCellTint;
         if (NeonTheme.ReducedEffects) intensity *= NeonMotion.T.reducedEffectsStrength;
-        Color accent = correct ? NeonTheme.T.Primary : NeonTheme.T.Danger;
+        Color accent = correct ? NeonMotion.T.successAccent : NeonMotion.T.damageAccent;
         Color impact = Color.Lerp(baseCellColor, accent, Mathf.Clamp01(intensity));
         // Merge repeated feedback from its current visible value, with no queue.
         feedbackStart = Color.Lerp(bgImage.color, impact, .9f);
         feedbackDuration = Mathf.Max(0f, correct ? NeonMotion.T.correctCellDuration : NeonMotion.T.wrongCellDuration);
         feedbackElapsed = 0f;
         feedbackActive = feedbackDuration > 0f;
-        if (correct) ClearErrorLayer(); else BeginErrorLayer();
+        if (correct) BeginSuccessLayer(); else BeginErrorLayer();
         bgImage.color = feedbackActive ? feedbackStart : CurrentBaseColor();
     }
 
@@ -316,6 +351,16 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             errorFrame.color = tint;
             if (t >= 1f) ClearErrorLayer();
         }
+        if (successActive)
+        {
+            successElapsed += delta;
+            float t = NeonMotionAccent.Fraction(successElapsed, successDuration);
+            Color tint = NeonMotion.T.successAccent;
+            tint.a = (1f - NeonMotion.Ease(t)) * NeonMotion.T.correctCellTint * NeonMotionAccent.Strength;
+            if (terminalPresentation) tint.a *= 1f - terminalShutdown;
+            successFrame.color = tint;
+            if (t >= 1f) ClearSuccessLayer();
+        }
     }
 
     /// <summary>
@@ -327,6 +372,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         consumedForNextAssignment = false;
         feedbackActive = false;
         ClearErrorLayer();
+        ClearSuccessLayer();
         CancelExit();
         if (bgImage != null) bgImage.color = CurrentBaseColor();
         if (settleTargets) SettleTarget();
@@ -431,6 +477,25 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     {
         errorActive = false;
         if (errorFrame != null) errorFrame.gameObject.SetActive(false);
+    }
+
+    private void BeginSuccessLayer()
+    {
+        if (successFrame == null) return;
+        successDuration = Mathf.Max(0f, NeonMotion.T.correctCellDuration);
+        successElapsed = 0f;
+        successActive = successDuration > 0f;
+        if (!successActive) { ClearSuccessLayer(); return; }
+        successFrame.gameObject.SetActive(true);
+        Color tint = NeonMotion.T.successAccent;
+        tint.a = NeonMotion.T.correctCellTint * NeonMotionAccent.Strength;
+        successFrame.color = tint;
+    }
+
+    private void ClearSuccessLayer()
+    {
+        successActive = false;
+        if (successFrame != null) successFrame.gameObject.SetActive(false);
     }
 
     private static PrecisionCellFrame CreateFrame(string name, RectTransform parent)

@@ -17,7 +17,17 @@ using UnityEngine;
     public int maximumHealthTier, startingReserveTier, gridStabilizerTier, reverseResistanceTier;
     public bool legacyMigrationComplete;
     public string lastBankedRunId = string.Empty;
+    public OnboardingStatus onboardingStatus;
+    public bool hasStartedRealRun;
     public static PlayerProfileData CreateDefault() => new PlayerProfileData();
+}
+
+/// <summary>Durable outcome of the optional first-run practice sequence.</summary>
+public enum OnboardingStatus
+{
+    NeverSeen,
+    Skipped,
+    Completed
 }
 
 [Serializable] public sealed class UpgradeSnapshotData

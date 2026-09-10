@@ -8,7 +8,9 @@ public sealed class NeonMotionSettings : ScriptableObject
     public BoundedEase easing = BoundedEase.OutCubic;
 
     [Header("In-place campaign transition")]
-    [Min(0)] public float levelTransitionDuration = 1f;
+    [Min(0)] public float levelTransitionDuration = 1.8f;
+    [Min(0)] public float levelTransitionPreparationDuration = 1f;
+    [Min(0)] public float practiceTransitionDuration = 1f;
     public BoundedEase levelTransitionEasing = BoundedEase.SmoothStep;
 
     [Header("Run-ending presentation / seconds and normalized timeline")]
@@ -37,11 +39,12 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Header("Accepted input and resources / seconds")]
     [Min(0)] public float correctCellDuration = .16f;
     [Min(0)] public float wrongCellDuration = .16f;
-    [Range(0, .5f)] public float correctCellTint = .22f;
-    [Range(0, .5f)] public float wrongCellTint = .32f;
-    [Range(0, 1)] public float wrongCellOutlineOpacity = .82f;
+    [Range(0, .5f)] public float correctCellTint = .30f;
+    [Range(0, .5f)] public float wrongCellTint = .45f;
+    [Range(0, 1)] public float wrongCellOutlineOpacity = .95f;
     [Range(0, 1)] public float damageAccentOpacity = .82f;
-    public Color damageAccent = new Color(1f, .502f, .427f, 1f);
+    public Color damageAccent = new Color(1f, .16f, .22f, 1f);
+    public Color successAccent = new Color(.35f, 1f, .48f, 1f);
     [Min(0)] public float healthDuration = .20f;
     [Range(.5f, 1f)] public float healthDamageCompression = .91f;
     [Min(0)] public float floatingDamageDuration = .26f;
@@ -51,8 +54,16 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Min(0)] public float reserveExhaustedDuration = .22f;
     [Range(0, 1)] public float reserveFailureAccentOpacity = .9f;
     public Color reserveFailureAccent = new Color(1f, .796f, .459f, 1f);
-    [Min(0)] public float damageVignetteDuration = .20f;
-    [Range(0, 1)] public float damageVignetteIntensity = .055f;
+    [Min(0)] public float damageVignetteDuration = .24f;
+    [Range(0, 1)] public float damageVignetteIntensity = .48f;
+    [Min(0)] public float successVignetteDuration = .17f;
+    [Range(0, 1)] public float successVignetteIntensity = .18f;
+    [Range(.04f, .3f)] public float vignetteEdgeWidth = .12f;
+    [Range(.12f, .18f)] public float damageShakeDuration = .15f;
+    [Range(0, .008f)] public float damageShakeViewportFraction = .004f;
+    [Range(0, 8)] public int successParticleCount = 6;
+    [Range(.15f, .25f)] public float successParticleDuration = .22f;
+    [Range(0, .05f)] public float successParticleTravel = .02f;
     [Range(0, 1)] public float terminalGridDimMultiplier = .22f;
     [Min(0)] public float progressDuration = .12f;
     [Min(0)] public float resourceDuration = .22f;

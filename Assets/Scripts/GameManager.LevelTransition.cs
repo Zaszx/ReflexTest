@@ -12,9 +12,34 @@ public sealed partial class GameManager
     private CanvasGroup incomingGridGroup;
     private Vector3 transitionGridPosition, transitionGridScale;
     private Quaternion transitionGridRotation;
+    private LevelTransitionAnnouncementSelector announcementSelector;
+
+    private void ResetAnnouncementSelection()
+    {
+        announcementSelector = new LevelTransitionAnnouncementSelector(
+            Resources.Load<LevelTransitionAnnouncementSettings>("LevelTransitionAnnouncementSettings"));
+        var boundary = announcementSelector.FindBoundary(campaign);
+        if (boundary.kind == MotionChallengeKind.Combined)
+            Debug.LogWarning($"Level {boundary.enteringLevelNumber} introduces multiple motion modifiers together; using one combined grid challenge.");
+    }
 
     private void BeginNextLevelTransition(int completedLevelNumber)
     {
+        if (announcementSelector == null) ResetAnnouncementSelection();
+        var announcement = announcementSelector.Select(campaign, completedLevelNumber, !isDebugSession && !IsOnboardingActive);
+        BeginPreparedLevelTransition(completedLevelNumber, () =>
+        {
+            sessionRun.currentLevelIndex++;
+            InitializeCurrentLevelState();
+        }, announcement.Subline, NeonMotion.T.levelTransitionDuration);
+    }
+
+    // Campaign, guided next-level demo, and practice handoff share the same cell/pose morph.
+    private void BeginPreparedLevelTransition(int completedLevelNumber, System.Action prepareDestination,
+        string announcementSubline = null, float duration = -1f)
+    {
+        // Settle cosmetic recoil before sampling the authoritative grid pose.
+        StopDamageFlash();
         LevelData previous = activeLevel;
         float sourceNormalTime = sessionRun.levelState.reserveActive ? 0f : sessionRun.levelState.normalTimeRemaining;
         transitionCellFrom = GameSquare.CellPalette(previous.cellColor);
@@ -29,13 +54,12 @@ public sealed partial class GameManager
 
         // Commit the prepared next-level checkpoint before presentation starts.
         // No reward, progression or PRNG work is deferred to animation completion.
-        sessionRun.currentLevelIndex++;
-        InitializeCurrentLevelState();
+        prepareDestination();
         SaveRealRunCritical();
         state = FlowState.LevelTransition;
         levelTransitionActive = true;
         levelTransitionElapsed = 0f;
-        levelTransitionDuration = Mathf.Max(0f, NeonMotion.T.levelTransitionDuration);
+        levelTransitionDuration = Mathf.Max(0f, duration < 0 ? NeonMotion.T.practiceTransitionDuration : duration);
         levelTransitionResumedFrame = -1;
         transitionCellTo = GameSquare.CellPalette(activeLevel.cellColor);
         transitionTargetTo = NeonTheme.LevelTarget(activeLevel.outlineColor);
@@ -68,7 +92,8 @@ public sealed partial class GameManager
         float fitRatio = oldSide / Mathf.Max(1f, baseGridSide);
         transitionGridScale = new Vector3(oldScale.x / destinationScale.x * fitRatio,
             oldScale.y / destinationScale.y * fitRatio, 1f);
-        rogueliteUI.BeginLevelTransition(completedLevelNumber, activeLevel, campaign.LevelCount, sessionRun, isDebugSession, sourceNormalTime);
+        rogueliteUI.BeginLevelTransition(completedLevelNumber, activeLevel, campaign.LevelCount, sessionRun, isDebugSession,
+            sourceNormalTime, announcementSubline, levelTransitionDuration);
         RenderLevelTransition(0f);
         // Even a zero-duration configuration settles only through the flow owner.
     }
@@ -96,13 +121,18 @@ public sealed partial class GameManager
         // No second introduction, screen animation, queued input or reward callback.
         terminalRequested = false;
         transitionInputReadyFrame = Time.frameCount;
-        state = FlowState.Playing;
+        state = IsOnboardingActive ? FlowState.Onboarding : FlowState.Playing;
         UpdateGameplayUI();
     }
 
     private void RenderLevelTransition(float progress)
     {
-        float eased = NeonMotion.Ease(progress, NeonMotion.T.levelTransitionEasing);
+        float prepareDuration = Mathf.Min(levelTransitionDuration, Mathf.Max(0f, NeonMotion.T.levelTransitionPreparationDuration));
+        // Even zero-duration transitions first expose the captured source pose;
+        // their flow-owner advance then settles the prepared endpoint.
+        float prepareProgress = progress <= 0 ? 0f : prepareDuration <= 0 ? 1f :
+            Mathf.Clamp01(progress * levelTransitionDuration / prepareDuration);
+        float eased = NeonMotion.Ease(prepareProgress, NeonMotion.T.levelTransitionEasing);
         Color cellColor = Color.Lerp(transitionCellFrom, transitionCellTo, eased);
         Color targetColor = Color.Lerp(transitionTargetFrom, transitionTargetTo, eased);
         foreach (GameSquare cell in instantiatedSquares)
@@ -111,7 +141,7 @@ public sealed partial class GameManager
             cell.RenderLevelPresentation(eased);
         }
         foreach (GameSquare cell in retiredGridCells) cell.SetBasePalette(cellColor, targetColor);
-        float pose = transitionReusesCells ? eased : RenderGridResize(progress);
+        float pose = transitionReusesCells ? eased : RenderGridResize(prepareProgress);
         gridContentRoot.localPosition = Vector3.Lerp(transitionGridPosition, Vector3.zero, pose);
         gridContentRoot.localRotation = Quaternion.Slerp(transitionGridRotation, Quaternion.identity, pose);
         gridContentRoot.localScale = Vector3.Lerp(transitionGridScale, Vector3.one, pose);

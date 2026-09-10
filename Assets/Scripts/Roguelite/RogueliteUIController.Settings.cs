@@ -8,6 +8,7 @@ public sealed partial class RogueliteUIController
     private RectTransform settingsCard;
     private Vector2 settingsAvailableSize;
     private TMP_Text settingsSubtitle;
+    private Button onboardingSettingsButton;
     private NeonSettingsSwitch hapticsSwitch, reducedSwitch;
     private static readonly Color SettingsCyan = NeonTheme.Hex("78E7FA");
     private static readonly Color SettingsMuted = NeonTheme.Hex("64869E");
@@ -22,7 +23,7 @@ public sealed partial class RogueliteUIController
     private void CreateSettings()
     {
         settingsCard = Rect("SettingsCard", settings);
-        At(settingsCard, .5f, .5f, 0, 0, 1000, 1264);
+        At(settingsCard, .5f, .5f, 0, 0, 1000, 1424);
         var frame = SettingsArt("NeonPanel", settingsCard, NeonSettingsGraphic.Kind.Panel, NeonTheme.Hex("65CCFF"));
         Fill(frame.rectTransform);
         var brand = Txt("Brand", settingsCard, "NEON REFLEX", 25, 96, -78, 740, 38, SettingsCyan);
@@ -47,8 +48,17 @@ public sealed partial class RogueliteUIController
         reducedToggle.onValueChanged.AddListener(v => NeonTheme.ReducedEffects = v);
         reducedToggle.SetIsOnWithoutNotify(NeonTheme.ReducedEffects); reducedSwitch.Sync();
         SettingsDivider(828);
-        gm.settingsCloseButton = SettingsButton("CloseSettings", "DONE", 906, 134, true);
-        var home = SettingsButton("SettingsHome", "RETURN HOME", 1080, 120, false);
+        onboardingSettingsButton = SettingsButton("HowToPlay", "HOW TO PLAY", 870, 112, false);
+        onboardingSettingsButton.onClick.AddListener(() =>
+        {
+            if (gm.IsOnboardingActive)
+                gm.SkipOnboarding();
+            else
+                gm.BeginOnboardingReplay();
+        });
+        SettingsDivider(1000);
+        gm.settingsCloseButton = SettingsButton("CloseSettings", "DONE", 1042, 134, true);
+        var home = SettingsButton("SettingsHome", "RETURN HOME", 1216, 120, false);
         home.onClick.AddListener(gm.ReturnToMainMenu);
         FitSettingsCard();
     }
@@ -114,6 +124,7 @@ public sealed partial class RogueliteUIController
         settingsHeading.text = duringGameplay ? "PAUSED" : "SETTINGS";
         settingsSubtitle.text = duringGameplay ? "SETTINGS" : "PREFERENCES";
         ButtonText(gm.settingsCloseButton, duringGameplay ? "RESUME" : "DONE");
+        ButtonText(onboardingSettingsButton, gm.IsOnboardingActive ? "SKIP PRACTICE" : "HOW TO PLAY");
         FitSettingsCard(); RefreshInputLayers();
     }
 
@@ -127,7 +138,7 @@ public sealed partial class RogueliteUIController
         Vector2 available = settings.rect.size;
         if (available == settingsAvailableSize) return;
         settingsAvailableSize = available;
-        float fit = Mathf.Min(1f, (available.x - 44) / 1000f, (available.y - 72) / 1264f);
+        float fit = Mathf.Min(1f, (available.x - 44) / 1000f, (available.y - 72) / 1424f);
         settingsCard.localScale = Vector3.one * Mathf.Max(.1f, fit);
     }
 }

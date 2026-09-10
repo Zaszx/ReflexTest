@@ -246,6 +246,78 @@ public sealed class GameSquareMotionEditModeTests
     }
 
     [Test]
+    public void RenderedOutlineCornersCaptureTheLiveTransformedTargetBeforeReuse()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Medium);
+        RectTransform root = (RectTransform)cell.transform;
+        root.anchoredPosition = new Vector2(21f, -11f);
+        root.localRotation = Quaternion.Euler(0f, 0f, 43f);
+        root.localScale = new Vector3(.81f, .81f, 1f);
+        Vector3[] expected = new Vector3[4];
+        Vector3[] captured = new Vector3[4];
+
+        cell.outlineImage.rectTransform.GetWorldCorners(expected);
+        Assert.That(cell.TryGetRenderedOutlineCorners(captured), Is.True);
+        for (int i = 0; i < captured.Length; i++)
+            Assert.That(Vector3.Distance(captured[i], expected[i]), Is.LessThan(.0001f));
+
+        cell.PlayConsumedFeedback();
+        cell.SetLitSize(GameSquare.LitSize.Large, true);
+        Assert.That(cell.TryGetRenderedOutlineCorners(captured), Is.True,
+            "The reused cell exposes its new rendered target, so callers must capture before consumption.");
+        Assert.That(Vector3.Distance(captured[0], expected[0]), Is.GreaterThan(.0001f));
+    }
+
+    [Test]
+    public void RenderedOutlineCornerCaptureRejectsMissingOrInvisibleTargets()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.None);
+        Assert.That(cell.TryGetRenderedOutlineCorners(null), Is.False);
+        Assert.That(cell.TryGetRenderedOutlineCorners(new Vector3[3]), Is.False);
+        Assert.That(cell.TryGetRenderedOutlineCorners(new Vector3[4]), Is.False);
+    }
+
+    [Test]
+    public void CorrectFeedbackUsesAnIndependentSuccessLayerDuringImmediateCellReuse()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        PrecisionCellFrame target = cell.outlineImage.GetComponentInChildren<PrecisionCellFrame>();
+        PrecisionCellFrame success = cell.bgImage.transform.Find("SuccessOutline").GetComponent<PrecisionCellFrame>();
+        cell.PlayTapFeedback(true);
+
+        Assert.That(success.gameObject.activeSelf, Is.True);
+        Assert.That(success.raycastTarget, Is.False);
+        Assert.That(success.CornerFraction, Is.LessThanOrEqualTo(.1f),
+            "Success feedback uses bounded corner ticks, never a target-like hollow square.");
+        Assert.That(target.color.a, Is.EqualTo(1f), "Success feedback must not consume the active target outline.");
+
+        cell.PlayConsumedFeedback();
+        cell.SetLitSize(GameSquare.LitSize.Small, true);
+        Assert.That(success.gameObject.activeSelf, Is.True, "The outgoing acknowledgement owns its own layer.");
+        Assert.That(cell.currentLitSize, Is.EqualTo(GameSquare.LitSize.Small));
+        Assert.That(cell.outlineImage.gameObject.activeSelf, Is.True);
+        cell.AdvancePresentation(1f);
+        Assert.That(success.gameObject.activeSelf, Is.False);
+    }
+
+    [Test]
+    public void PaletteReplacementCancelsBothTransientLocalFeedbackLayers()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        PrecisionCellFrame damage = cell.bgImage.transform.Find("DamageOutline").GetComponent<PrecisionCellFrame>();
+        PrecisionCellFrame success = cell.bgImage.transform.Find("SuccessOutline").GetComponent<PrecisionCellFrame>();
+        cell.PlayTapFeedback(false);
+        Assert.That(damage.gameObject.activeSelf, Is.True);
+        cell.SetBasePalette(new Color(.31f, .07f, .16f, 1f), new Color(1f, .25f, .12f, 1f));
+        Assert.That(damage.gameObject.activeSelf, Is.False);
+
+        cell.PlayTapFeedback(true);
+        Assert.That(success.gameObject.activeSelf, Is.True);
+        cell.SetBasePalette(new Color(.08f, .11f, .19f, 1f), new Color(.1f, .9f, .8f, 1f));
+        Assert.That(success.gameObject.activeSelf, Is.False);
+    }
+
+    [Test]
     public void TerminalFreezePreservesCurrentRolePoseWhileItsDamageLayerCanSettle()
     {
         GameSquare cell = Create(GameSquare.LitSize.Large);

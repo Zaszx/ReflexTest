@@ -37,9 +37,11 @@ public sealed partial class RogueliteUIController : MonoBehaviour
     private LevelData transitionNextLevel;
     private Color gameplayPrimary = Color.white, gameplayAccent = Color.white, transitionSourcePrimary, transitionSourceAccent;
     private Color transitionTimerFrom, transitionTimerLabelFrom, transitionTimerFillFrom;
-    private TMP_Text transitionTitle;
+    private TMP_Text transitionTitle, transitionSubtitle;
     private CanvasGroup transitionGroup;
     private RectTransform transitionRect;
+    private LevelTransitionAnnouncementSettings transitionAnnouncementSettings;
+    private float transitionAnnouncementDuration;
     private readonly Dictionary<GameObject, NeonScreenMotion> screens = new Dictionary<GameObject, NeonScreenMotion>();
     private sealed class UpgradeView
     {
@@ -216,7 +218,8 @@ public sealed partial class RogueliteUIController : MonoBehaviour
         ApplyGameplayTheme(level.textPrimaryColor,level.outlineColor);
     }
 
-    public void BeginLevelTransition(int completedLevelNumber, LevelData next, int campaignCount, ActiveRunData run, bool debug, float sourceNormalTime)
+    public void BeginLevelTransition(int completedLevelNumber, LevelData next, int campaignCount, ActiveRunData run, bool debug,
+        float sourceNormalTime, string announcementSubline = null, float totalDuration = 0f)
     {
         if (next == null || run == null) return;
         transitionNextLevel = next; levelTransitionActive = true;
@@ -236,7 +239,10 @@ public sealed partial class RogueliteUIController : MonoBehaviour
         debugBadge.gameObject.SetActive(debug); SetFill(progressFill, 0f, PlayCyan); SetFill(healthFill, run.currentHealth / (float)Mathf.Max(1, run.upgrades.maxHealth), run.currentHealth <= 1 ? T.Danger : PlayLime);
         RefreshHudGraphics(run.currentHealth, run.upgrades.maxHealth, 0, false, false);
         hudMotion.SetState(run.currentHealth, run.upgrades.maxHealth, 0, Mathf.Max(1, next.requiredCorrectClicks), false);
-        transitionTitle.text = $"LEVEL {Mathf.Max(1, completedLevelNumber)} COMPLETE";
+        transitionTitle.text = completedLevelNumber < 0 ? "BACK TO YOUR RUN" :
+            completedLevelNumber == 0 ? $"LEVEL {next.levelNumber:00}" : $"LEVEL {completedLevelNumber} COMPLETE";
+        transitionAnnouncementDuration = totalDuration > 0f ? totalDuration : NeonMotion.T.levelTransitionDuration;
+        ConfigureTransitionAnnouncement(announcementSubline);
         transitionGroup.alpha = 0f; transitionRect.localScale = NeonTheme.ReducedEffects ? Vector3.one : Vector3.one * .96f; transitionGroup.gameObject.SetActive(true);
         RenderLevelTransition(0f, 0f, sourceNormalTime);
     }
@@ -250,7 +256,9 @@ public sealed partial class RogueliteUIController : MonoBehaviour
         if (!levelTransitionActive || transitionNextLevel == null) return;
         normalizedProgress = Mathf.Clamp01(normalizedProgress); easedProgress = Mathf.Clamp01(easedProgress); transitionDisplayedSourceTime = sourceTime;
         int required = Mathf.Max(1, transitionNextLevel.requiredCorrectClicks);
-        int shown = Mathf.Clamp(Mathf.FloorToInt(required * normalizedProgress + .0001f), 0, required);
+        float preparationDuration = Mathf.Max(0f, NeonMotion.T.levelTransitionPreparationDuration);
+        float preparation = preparationDuration <= 0f ? 1f : Mathf.Clamp01(normalizedProgress * transitionAnnouncementDuration / preparationDuration);
+        int shown = Mathf.Clamp(Mathf.FloorToInt(required * preparation + .0001f), 0, required);
         objective.SetText("<color=#7393A7><size=25>LEFT</size></color>  {0}<color=#7393A7>/{1}</color>", shown, required);
         float time = Mathf.Lerp(sourceTime, transitionNextLevel.timeLimit, easedProgress);
         timerLabel.text = "TIME"; timerLabel.fontSize = 23; timerLabel.characterSpacing = 3;
@@ -262,10 +270,40 @@ public sealed partial class RogueliteUIController : MonoBehaviour
         SetFill(timerFill, timeRatio, Color.Lerp(transitionTimerFillFrom, PlayCyan, easedProgress));
         timeDial.value = Mathf.Clamp01(timeRatio); timeDial.SetVerticesDirty();
         ApplyGameplayTheme(Color.Lerp(transitionSourcePrimary, transitionNextLevel.textPrimaryColor, easedProgress), Color.Lerp(transitionSourceAccent, transitionNextLevel.outlineColor, easedProgress));
-        transitionTitle.color = Color.Lerp(NeonTheme.LevelTarget(transitionSourceAccent), NeonTheme.LevelTarget(transitionNextLevel.outlineColor), easedProgress);
-        float entrance = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, .18f, normalizedProgress));
-        float exit = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(.78f, 1f, normalizedProgress));
+        transitionTitle.color = PlayWhite;
+        if (transitionSubtitle != null) transitionSubtitle.color = PlayWhite;
+        float phaseDuration = transitionAnnouncementSettings == null ? 0f : transitionAnnouncementSettings.PhaseDuration;
+        float entranceEnd = phaseDuration <= 0f ? 0f : Mathf.Clamp01(transitionAnnouncementSettings.entranceDuration / phaseDuration);
+        float exitStart = phaseDuration <= 0f ? 1f : Mathf.Clamp01((transitionAnnouncementSettings.entranceDuration + transitionAnnouncementSettings.holdDuration) / phaseDuration);
+        float entrance = entranceEnd <= 0f ? 1f : Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, entranceEnd, normalizedProgress));
+        float exit = exitStart >= 1f ? (normalizedProgress >= 1f ? 1f : 0f) : Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(exitStart, 1f, normalizedProgress));
         transitionGroup.alpha = entrance * (1f - exit); transitionRect.localScale = NeonTheme.ReducedEffects ? Vector3.one : Vector3.one * Mathf.Lerp(.96f, 1f, entrance) * Mathf.Lerp(1f, .98f, exit);
+    }
+
+    private void ConfigureTransitionAnnouncement(string subline)
+    {
+        if (transitionAnnouncementSettings == null)
+        {
+            transitionAnnouncementSettings = Resources.Load<LevelTransitionAnnouncementSettings>("LevelTransitionAnnouncementSettings");
+            if (transitionAnnouncementSettings == null) transitionAnnouncementSettings = ScriptableObject.CreateInstance<LevelTransitionAnnouncementSettings>();
+        }
+        bool hasSubline = !string.IsNullOrWhiteSpace(subline);
+        if (transitionSubtitle == null)
+        {
+            transitionSubtitle = Text("TransitionSubtitle", transitionRect, string.Empty, 36, PlayWhite, TextAlignmentOptions.Center);
+            transitionSubtitle.fontStyle = FontStyles.Normal;
+            transitionSubtitle.enableAutoSizing = true; transitionSubtitle.fontSizeMin = 32; transitionSubtitle.fontSizeMax = 36;
+            transitionSubtitle.textWrappingMode = TextWrappingModes.Normal;
+        }
+        // Keep the structural morph visible below the HUD-side announcement.
+        if (hasSubline) At(transitionRect, .5f, 1f, 0, -604, 940, 220);
+        else At(transitionRect, .5f, .5f, 0, -70, 840, 132);
+        transitionTitle.fontSize = hasSubline ? 54 : 48; transitionTitle.enableAutoSizing = false;
+        transitionTitle.fontStyle = FontStyles.Bold; transitionTitle.alignment = TextAlignmentOptions.Center;
+        At(transitionTitle.rectTransform, .5f, .5f, 0, hasSubline ? 35 : 0, 780, 70);
+        transitionSubtitle.text = hasSubline ? subline.Trim() : string.Empty;
+        transitionSubtitle.gameObject.SetActive(hasSubline);
+        if (hasSubline) At(transitionSubtitle.rectTransform, .5f, .5f, 0, -48, 820, 96);
     }
 
     public void EndLevelTransition()

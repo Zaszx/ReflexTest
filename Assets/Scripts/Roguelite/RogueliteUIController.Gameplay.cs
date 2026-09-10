@@ -103,7 +103,7 @@ public sealed partial class RogueliteUIController
         debugBadge = Txt("Sandbox", play, "PRACTICE / NO PROGRESSION", 20, 58, 270, 950, 35, PlayGold, 0, 0);
         gm.homeButton = GameplayButton("Home", "HOME", NeonGameplayGraphic.Kind.Home, PlayCyan, false);
         gm.settingsButton = GameplayButton("Pause", "PAUSE", NeonGameplayGraphic.Kind.Pause, PlayPink, true);
-        var footer = Txt("GameplayFooter", play, "STAY SHARP", 15, 34, 20, 1012, 24, NeonTheme.Hex("264252"), 0, 0);
+        var footer = Txt("GameplayFooter", play, "STAY SHARP", 15, 34, 30, 1012, 24, NeonTheme.Hex("264252"), 0, 0);
         footer.characterSpacing = 7; footer.alignment = TextAlignmentOptions.Center;
 
         hudMotion = play.gameObject.AddComponent<NeonHudMotion>();

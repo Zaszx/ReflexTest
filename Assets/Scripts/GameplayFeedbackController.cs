@@ -8,7 +8,7 @@ using UnityEngine.UI;
 /// Rule-change presentation in the existing authorized input-lock windows.
 /// This layer never moves the gameplay root, grid, or any target.
 /// </summary>
-public class GameplayFeedbackController : MonoBehaviour
+public partial class GameplayFeedbackController : MonoBehaviour
 {
     public const float ReverseEntranceDuration = 0.76f;
     public const float ReverseExitDuration = 0.59f;
@@ -116,6 +116,7 @@ public class GameplayFeedbackController : MonoBehaviour
     {
         StopPresentation();
         if (visualRoot != null) visualRoot.gameObject.SetActive(false);
+        ResetTapFeedback();
     }
 
     private void BeginTransition(bool reverse, Action onComplete)

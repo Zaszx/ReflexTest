@@ -24,7 +24,8 @@ public sealed partial class GameManager : MonoBehaviour
         RunEnding,
         RunSummary,
         Shop,
-        Settings
+        Settings,
+        Onboarding
     }
 
     public static GameManager Instance { get; private set; }
@@ -106,7 +107,6 @@ public sealed partial class GameManager : MonoBehaviour
     private float currentGridScale = 1f;
 
     private Coroutine introCoroutine;
-    private Coroutine flashCoroutine;
     private Vector2 lastGridBoundsSize;
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -223,6 +223,7 @@ public sealed partial class GameManager : MonoBehaviour
         if (feedbackController == null)
             feedbackController = gameObject.AddComponent<GameplayFeedbackController>();
         feedbackController.Initialize(gridContainer.parent.parent as RectTransform);
+        feedbackController.InitializeTapFeedback(gameplayPanel, flashOverlay);
     }
 
     private void ConfigureRogueliteUI()
@@ -312,6 +313,11 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void Update()
     {
+        if (IsOnboardingActive)
+        {
+            TickOnboarding();
+            return;
+        }
         if (runEndingActive)
         {
             AdvanceRunEndingPresentation(NeonMotion.Delta(applicationSuspended || state != FlowState.RunEnding));
@@ -387,6 +393,19 @@ public sealed partial class GameManager : MonoBehaviour
             return;
         }
 
+        if (OnboardingProfileRules.ShouldOffer(saveData))
+        {
+            BeginOnboarding(false);
+            return;
+        }
+        CreateRealRunState();
+        SaveRealRunCritical();
+        EnterCurrentLevel(true, false);
+    }
+
+    private void CreateRealRunState()
+    {
+        ResetAnnouncementSelection();
         UpgradeSnapshotData snapshot = UpgradeCatalog.CaptureSnapshot(gameConfig, saveData.profile);
         Guid runGuid = Guid.NewGuid();
         int seed = BitConverter.ToInt32(runGuid.ToByteArray(), 0);
@@ -411,11 +430,10 @@ public sealed partial class GameManager : MonoBehaviour
         };
         saveData.activeRun = sessionRun;
         saveData.lastRunResult = null;
+        OnboardingProfileRules.MarkStartedRealRun(saveData.profile);
         isDebugSession = false;
         terminalRequested = false;
         InitializeCurrentLevelState();
-        SaveRealRunCritical();
-        EnterCurrentLevel(true, false);
     }
 
     public void ContinueRun()
@@ -768,6 +786,11 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void OnSquareClicked(GameSquare square)
     {
+        if (IsOnboardingActive)
+        {
+            OnPracticeSquareClicked(square);
+            return;
+        }
         if (!SimulationIsActive || square == null || Time.frameCount == transitionInputReadyFrame)
             return;
 
@@ -795,6 +818,11 @@ public sealed partial class GameManager : MonoBehaviour
         TriggerScreenFlash(false);
         TriggerHaptic();
 
+        if (IsOnboardingActive)
+        {
+            if (sessionRun.currentHealth <= 0) SetOnboardingStep(OnboardingStep.HealthRetry);
+            return;
+        }
         if (sessionRun.currentHealth <= 0)
             FailRun("HEALTH DEPLETED");
         else
@@ -803,13 +831,13 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void HandleCorrectTap()
     {
-        TriggerScreenFlash(true);
         ActiveLevelStateData levelState = sessionRun.levelState;
         GridSequenceState sequence = new GridSequenceState(levelState.smallIndex, levelState.mediumIndex, levelState.largeIndex);
         RestoreRandom();
 
         bool reverseWasActive = levelState.reverseActive;
         int consumedIndex = reverseWasActive ? levelState.smallIndex : levelState.largeIndex;
+        if (IsValidSquareIndex(consumedIndex)) feedbackController.CaptureSuccessPose(instantiatedSquares[consumedIndex]);
         bool advanced = reverseWasActive
             ? GridSequenceRules.AdvanceReverse(ref sequence, instantiatedSquares.Count, ref random)
             : GridSequenceRules.AdvanceNormal(ref sequence, instantiatedSquares.Count, ref random);
@@ -818,6 +846,8 @@ public sealed partial class GameManager : MonoBehaviour
             Debug.LogError("Target sequence could not advance; input was ignored safely.");
             return;
         }
+
+        TriggerScreenFlash(true);
 
         levelState.smallIndex = sequence.small;
         levelState.mediumIndex = sequence.medium;
@@ -836,6 +866,11 @@ public sealed partial class GameManager : MonoBehaviour
             feedbackController.PlayReverseCorrect(instantiatedSquares[levelState.largeIndex]);
         UpdateGameplayUI();
 
+        if (IsOnboardingActive)
+        {
+            OnPracticeCorrectTap();
+            return;
+        }
         if (levelState.objectiveProgress >= Mathf.Max(1, activeLevel.requiredCorrectClicks))
         {
             CompleteCurrentLevel();
@@ -959,7 +994,6 @@ public sealed partial class GameManager : MonoBehaviour
         {
             terminalRequested = true;
             presentationToken++;
-            feedbackController.ResetImmediate();
             ConfigureFailPrimary("RETURN TO MENU", ReturnToMainMenu);
             var snapshot = new RunSummaryData { reason = reason };
             int practiceLevel = activeLevel != null ? activeLevel.levelNumber : sessionRun.currentLevelIndex + 1;
@@ -1149,7 +1183,7 @@ public sealed partial class GameManager : MonoBehaviour
             required,
             levelState.normalTimeRemaining,
             activeLevel.timeLimit,
-            levelState.reserveActive,
+            levelState.reserveActive && (!IsOnboardingActive || CurrentOnboardingStep != OnboardingStep.TimeCountdown),
             levelState.reverseActive,
             isDebugSession,
             levelState.reverseCorrectTapsRemaining);
@@ -1157,6 +1191,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void ReturnToMainMenu()
     {
+        if (IsOnboardingActive) { RequestOnboardingExit(false, true); return; }
         AcknowledgeCommittedRunReport();
         CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
@@ -1185,6 +1220,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void ShowMainMenu()
     {
+        if (IsOnboardingActive) { RequestOnboardingExit(false, true); return; }
         AcknowledgeCommittedRunReport();
         CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
@@ -1214,6 +1250,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void OpenUpgradeShop()
     {
+        if (IsOnboardingActive) return;
         AcknowledgeCommittedRunReport();
         CancelRunEndingPresentation();
         CancelLevelTransitionPresentation();
@@ -1276,7 +1313,7 @@ public sealed partial class GameManager : MonoBehaviour
         rogueliteUI.ShowSettings();
         rogueliteUI.RefreshSettings(stateBeforeSettings == FlowState.Playing || stateBeforeSettings == FlowState.LevelIntro ||
             stateBeforeSettings == FlowState.ReverseEntrance || stateBeforeSettings == FlowState.ReverseExit ||
-            stateBeforeSettings == FlowState.LevelTransition);
+            stateBeforeSettings == FlowState.LevelTransition || stateBeforeSettings == FlowState.Onboarding);
         feedbackController.SetPresentationPaused(true);
         SetSquareAnimationsPaused(true);
         rogueliteUI.SetHaptics(PlayerPrefs.GetInt("HapticsEnabled", 1) == 1);
@@ -1352,7 +1389,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void SaveRealRunCritical()
     {
-        if (isDebugSession || saveData == null || saveData.activeRun == null)
+        if (IsOnboardingActive || isDebugSession || saveData == null || saveData.activeRun == null)
             return;
         if (sessionRun != null)
         {
@@ -1364,7 +1401,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void SaveEnvelopeCritical()
     {
-        if (saveService == null || saveData == null)
+        if (IsOnboardingActive || saveService == null || saveData == null)
             return;
         saveData.saveVersion = gameConfig.saveVersion;
         saveData.profile.saveVersion = gameConfig.saveVersion;
@@ -1383,47 +1420,13 @@ public sealed partial class GameManager : MonoBehaviour
 
     private void TriggerScreenFlash(bool success)
     {
-        // Correct taps already react locally. Reserve is communicated by the
-        // amber resource display; only a mistake gets a brief, restrained wash.
-        if (flashOverlay == null || success || NeonTheme.ReducedEffects)
-            return;
-        if (flashCoroutine != null)
-            StopCoroutine(flashCoroutine);
-        Color damage = NeonMotion.T.damageAccent;
-        damage.a = Mathf.Clamp01(NeonMotion.T.damageVignetteIntensity);
-        flashCoroutine = StartCoroutine(AnimateFlash(damage));
-    }
-
-    private IEnumerator AnimateFlash(Color flashColor)
-    {
-        float inDuration = Mathf.Min(.04f, Mathf.Max(0, NeonMotion.T.damageVignetteDuration) * .2f);
-        float outDuration = Mathf.Max(0, NeonMotion.T.damageVignetteDuration) - inDuration;
-        Color start = flashOverlay.color;
-        float elapsed = 0f;
-        while (elapsed < inDuration)
-        {
-            if (!applicationSuspended && state != FlowState.Settings)
-                elapsed += NeonMotion.Delta();
-            flashOverlay.color = Color.Lerp(start, flashColor, NeonMotion.Ease(elapsed / inDuration));
-            yield return null;
-        }
-
-        elapsed = 0f;
-        while (elapsed < outDuration)
-        {
-            if (!applicationSuspended && state != FlowState.Settings)
-                elapsed += NeonMotion.Delta();
-            flashOverlay.color = Color.Lerp(flashColor, Color.clear, NeonMotion.Ease(elapsed / outDuration));
-            yield return null;
-        }
-        flashOverlay.color = Color.clear;
-        flashCoroutine = null;
+        if (success) feedbackController.PlayAcceptedSuccess();
+        else feedbackController.PlayAcceptedDamage();
     }
 
     private void StopDamageFlash()
     {
-        if (flashCoroutine != null) StopCoroutine(flashCoroutine);
-        flashCoroutine = null;
+        feedbackController?.ResetTapFeedback();
         if (flashOverlay != null) flashOverlay.color = Color.clear;
     }
 
@@ -1476,6 +1479,7 @@ public sealed partial class GameManager : MonoBehaviour
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
     public void StartDebugLevel(int levelIndex)
     {
+        if (IsOnboardingActive) { RequestOnboardingExit(false, true); return; }
         if (campaign == null || campaign.LevelCount == 0)
             return;
         int safeIndex = Mathf.Clamp(levelIndex, 0, campaign.LevelCount - 1);

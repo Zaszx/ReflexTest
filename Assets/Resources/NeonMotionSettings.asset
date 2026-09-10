@@ -13,7 +13,9 @@ MonoBehaviour:
   m_Name: NeonMotionSettings
   m_EditorClassIdentifier:
   easing: 2
-  levelTransitionDuration: 1
+  levelTransitionDuration: 1.8
+  levelTransitionPreparationDuration: 1
+  practiceTransitionDuration: 1
   levelTransitionEasing: 1
   terminalTransitionDuration: 0.9
   terminalGridShutdownStartNormalized: 0.13
@@ -36,10 +38,12 @@ MonoBehaviour:
   targetRoleGap: 0.06
   correctCellDuration: 0.16
   wrongCellDuration: 0.16
-  correctCellTint: 0.22
-  wrongCellTint: 0.32
+  correctCellTint: 0.3
+  wrongCellTint: 0.45
+  wrongCellOutlineOpacity: 0.95
   damageAccentOpacity: 0.82
-  damageAccent: {r: 1, g: 0.502, b: 0.427, a: 1}
+  damageAccent: {r: 1, g: 0.16, b: 0.22, a: 1}
+  successAccent: {r: 0.35, g: 1, b: 0.48, a: 1}
   healthDuration: 0.2
   healthDamageCompression: 0.91
   floatingDamageDuration: 0.26
@@ -49,8 +53,16 @@ MonoBehaviour:
   reserveExhaustedDuration: 0.22
   reserveFailureAccentOpacity: 0.9
   reserveFailureAccent: {r: 1, g: 0.796, b: 0.459, a: 1}
-  damageVignetteDuration: 0.2
-  damageVignetteIntensity: 0.055
+  damageVignetteDuration: 0.24
+  damageVignetteIntensity: 0.48
+  successVignetteDuration: 0.17
+  successVignetteIntensity: 0.18
+  vignetteEdgeWidth: 0.12
+  damageShakeDuration: 0.15
+  damageShakeViewportFraction: 0.004
+  successParticleCount: 6
+  successParticleDuration: 0.22
+  successParticleTravel: 0.02
   terminalGridDimMultiplier: 0.22
   progressDuration: 0.12
   resourceDuration: 0.22
