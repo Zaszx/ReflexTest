@@ -16,14 +16,14 @@ MonoBehaviour:
   levelNumber: 4
   gridSize: 3
   requiredCorrectClicks: 34
-  timeLimit: 16
+  timeLimit: 14.191
   completionCoinReward: 24
   reverseEnabled: 0
   rotateSpeed: 0
   scaleEnabled: 1
-  minimumGridScale: 0.92
-  maximumGridScale: 1
-  scaleCycleDuration: 2.4
+  minimumGridScale: 0.9
+  maximumGridScale: 1.02
+  scaleCycleDuration: 1.6
   movementEnabled: 0
   movementSpeedNormalized: 0
   movementTravelPaddingNormalized: 0.03

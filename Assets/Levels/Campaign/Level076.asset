@@ -16,16 +16,16 @@ MonoBehaviour:
   levelNumber: 76
   gridSize: 5
   requiredCorrectClicks: 128
-  timeLimit: 10.925
+  timeLimit: 9.173
   completionCoinReward: 240
   reverseEnabled: 1
-  rotateSpeed: 65
+  rotateSpeed: 98.75
   scaleEnabled: 1
-  minimumGridScale: 0.87
-  maximumGridScale: 1
-  scaleCycleDuration: 2.04
+  minimumGridScale: 0.855
+  maximumGridScale: 1.058
+  scaleCycleDuration: 1.221
   movementEnabled: 1
-  movementSpeedNormalized: 0.145
+  movementSpeedNormalized: 0.226
   movementTravelPaddingNormalized: 0.03
   backgroundColor: {r: 0.043, g: 0.043, b: 0.086, a: 1}
   cellColor: {r: 0.102, g: 0.102, b: 0.18, a: 1}

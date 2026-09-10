@@ -33,6 +33,17 @@ public static class NeonAndroidApkBuild
 
     static NeonAndroidApkBuild() => EditorApplication.update += Poll;
 
+    // Command-line entry point: finish the build before exiting the editor.
+    public static void BuildNow()
+    {
+        Build();
+        if (Application.isBatchMode)
+        {
+            var result = JsonUtility.FromJson<BuildStatus>(File.ReadAllText(StatusPath));
+            EditorApplication.Exit(result.state == "succeeded" ? 0 : 1);
+        }
+    }
+
     [MenuItem("Neon Reflex/Build/Android APK")]
     public static void RequestBuild()
     {
