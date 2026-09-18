@@ -25,6 +25,7 @@ public static class NeonTapFeedbackQA
             throw new InvalidOperationException("Tap-feedback QA requires NeonPresentationQAProfile isolated storage.");
 
         bool reducedBefore = NeonTheme.ReducedEffects;
+        bool particlesBefore = NeonMotion.T.successParticlesEnabled;
         bool controllerEnabled = true;
         CampaignDefinition authoredCampaign = gm.campaign;
         CampaignDefinition fixture = null;
@@ -33,6 +34,8 @@ public static class NeonTapFeedbackQA
             fixture = CreateFixture(authoredCampaign);
             gm.campaign = fixture;
             NeonTheme.ReducedEffects = false;
+            // Keep regression coverage for the optional, currently disabled burst.
+            NeonMotion.T.successParticlesEnabled = true;
             yield return StartFresh(gm, check);
             GameplayFeedbackController feedback = gm.GetComponent<GameplayFeedbackController>();
             if (feedback == null)
@@ -49,6 +52,7 @@ public static class NeonTapFeedbackQA
         finally
         {
             NeonTheme.ReducedEffects = reducedBefore;
+            NeonMotion.T.successParticlesEnabled = particlesBefore;
             if (gm != null)
             {
                 GameplayFeedbackController feedback = gm.GetComponent<GameplayFeedbackController>();

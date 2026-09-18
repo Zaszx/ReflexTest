@@ -101,8 +101,7 @@ public static class NeonMotionQA
                 new Cue(.25f,"correct tap",()=>Tap(gm,true)),new Cue(.28f,"settings during target morph",gm.OpenSettings),new Cue(.9f,"close settings and resume",gm.CloseSettings));
             gm.ReturnToMainMenu();gm.StartDebugLevel(0);yield return Ready(gm);
             run=RunData(gm);run.levelState.reverseCooldownRemaining=999;
-            run.randomState=NeonSaveService.EncodeRandomState(FindReuseSeed(run.levelState,Get<List<GameSquare>>(gm,"instantiatedSquares").Count,false));
-            yield return Record(gm,directory,"11-immediate-consumed-cell-reuse",1.25f,new Cue(.25f,"consume Large and immediately reuse cell as Small",()=>Tap(gm,true)));
+            yield return Record(gm,directory,"11-consumed-cell-clears",1.25f,new Cue(.25f,"consume Large and spawn replacement Small in another cell",()=>Tap(gm,true)));
             gm.ReturnToMainMenu();gm.StartDebugLevel(gm.campaign.LevelCount-1);yield return Ready(gm);
             run=RunData(gm);run.levelState.reverseActive=true;run.levelState.reverseCorrectTapsRemaining=12;
             gm.GetComponent<GameplayFeedbackController>().RestoreReverseActive();Invoke(gm,"UpdateGameplayUI");
@@ -261,14 +260,16 @@ public static class NeonMotionQA
             run=RunData(gm); run.levelState.reverseActive=reverse;run.levelState.reverseCorrectTapsRemaining=8;run.levelState.reverseCooldownRemaining=999;
             int consumed=reverse?run.levelState.smallIndex:run.levelState.largeIndex;
             int instance=Get<List<GameSquare>>(gm,"instantiatedSquares")[consumed].GetInstanceID();
-            uint seed=FindReuseSeed(run.levelState,Get<List<GameSquare>>(gm,"instantiatedSquares").Count,reverse);
-            run.randomState=NeonSaveService.EncodeRandomState(seed);
             Tap(gm,true);
-            var reused=Get<List<GameSquare>>(gm,"instantiatedSquares")[consumed];
-            Check((reverse?run.levelState.largeIndex:run.levelState.smallIndex)==consumed && reused.GetInstanceID()==instance && reused.gameObject.activeInHierarchy,(reverse?"Reverse":"Normal")+" immediate consumed-cell reuse preserves the existing active input object.");
-            Check(reused.currentLitSize==(reverse?GameSquare.LitSize.Large:GameSquare.LitSize.Small) && ProbeFloat(reused,"RenderedAlpha",1)>.1f,(reverse?"Reverse":"Normal")+" reused cell immediately displays its latest valid role independently of retirement.");
+            var squares=Get<List<GameSquare>>(gm,"instantiatedSquares");
+            var cleared=squares[consumed];
+            int replacement=reverse?run.levelState.largeIndex:run.levelState.smallIndex;
+            Check(replacement!=consumed && squares[replacement].currentLitSize==(reverse?GameSquare.LitSize.Large:GameSquare.LitSize.Small),(reverse?"Reverse":"Normal")+" replacement target appears in another cell after an accepted tap.");
+            Check(cleared.GetInstanceID()==instance && cleared.gameObject.activeInHierarchy && cleared.currentLitSize==GameSquare.LitSize.None && !cleared.outlineImage.gameObject.activeSelf && ProbeFloat(cleared,"RenderedAlpha",1)<.001f,(reverse?"Reverse":"Normal")+" consumed cell retains its existing input object with no active target role or outline.");
+            Check(ProbeFloat(cleared,"RetiringAlpha",0)>.001f,(reverse?"Reverse":"Normal")+" consumed target begins its retirement fade independently of the replacement.");
             yield return new WaitForSecondsRealtime(.3f);
-            CheckSettled(gm,(reverse?"Reverse":"Normal")+" reused cell");
+            Check(cleared.currentLitSize==GameSquare.LitSize.None && ProbeFloat(cleared,"RetiringAlpha",1)<.001f,(reverse?"Reverse":"Normal")+" consumed cell stays clear after its retirement fade finishes.");
+            CheckSettled(gm,(reverse?"Reverse":"Normal")+" consumed cell clears");
         }
 
         gm.ReturnToMainMenu();gm.StartDebugLevel(0);yield return Ready(gm);
@@ -415,17 +416,6 @@ public static class NeonMotionQA
         while(Flow(gm)!="Playing" && Time.realtimeSinceStartup<deadline)yield return null;
         if(Flow(gm)!="Playing")throw new InvalidOperationException("Motion QA gameplay readiness timed out in "+Flow(gm));
         yield return null;
-    }
-    private static uint FindReuseSeed(ActiveLevelStateData state,int count,bool reverse)
-    {
-        int consumed=reverse?state.smallIndex:state.largeIndex;
-        for(uint seed=1;seed<100000;seed++)
-        {
-            var random=new DeterministicRandom(seed);var next=new GridSequenceState(state.smallIndex,state.mediumIndex,state.largeIndex);
-            if(reverse)GridSequenceRules.AdvanceReverse(ref next,count,ref random);else GridSequenceRules.AdvanceNormal(ref next,count,ref random);
-            if((reverse?next.large:next.small)==consumed)return seed;
-        }
-        throw new InvalidOperationException("No deterministic immediate-reuse seed found.");
     }
     private static void CheckRoles(GameManager gm,string label)
     {

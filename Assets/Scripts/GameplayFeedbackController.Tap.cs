@@ -74,7 +74,7 @@ public partial class GameplayFeedbackController
     public void PlayAcceptedSuccess()
     {
         if (tapPriority == TapFeedbackPriority.Terminal) { outgoingPoseValid = false; return; }
-        if (outgoingPoseValid && tapParticles != null && !NeonTheme.ReducedEffects)
+        if (outgoingPoseValid && tapParticles != null && NeonMotion.T.successParticlesEnabled && !NeonTheme.ReducedEffects)
         {
             LastBurstCenterWorld = (outgoingCorners[0] + outgoingCorners[2]) * .5f;
             tapParticles.Emit(outgoingCorners);
@@ -137,7 +137,7 @@ public partial class GameplayFeedbackController
         delta = Mathf.Max(0f, delta);
         if (tapParticles != null)
         {
-            if (NeonTheme.ReducedEffects) tapParticles.Clear();
+            if (!NeonMotion.T.successParticlesEnabled || NeonTheme.ReducedEffects) tapParticles.Clear();
             else tapParticles.Advance(delta);
         }
         if (edgeDuration > 0)

@@ -61,9 +61,15 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Range(.04f, .3f)] public float vignetteEdgeWidth = .12f;
     [Range(.12f, .18f)] public float damageShakeDuration = .15f;
     [Range(0, .008f)] public float damageShakeViewportFraction = .004f;
+    public bool successParticlesEnabled = false;
     [Range(0, 8)] public int successParticleCount = 6;
     [Range(.15f, .25f)] public float successParticleDuration = .22f;
     [Range(0, .05f)] public float successParticleTravel = .02f;
+    [Header("Tap smileys")]
+    [Min(.01f)] public float smileyFadeInDuration = .08f;
+    [Min(0)] public float smileyHoldDuration = .14f;
+    [Min(.01f)] public float smileyFadeOutDuration = .22f;
+    [Range(.2f, .8f)] public float smileyCellFraction = .56f;
     [Range(0, 1)] public float terminalGridDimMultiplier = .22f;
     [Min(0)] public float progressDuration = .12f;
     [Min(0)] public float resourceDuration = .22f;

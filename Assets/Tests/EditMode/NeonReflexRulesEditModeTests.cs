@@ -36,6 +36,7 @@ public sealed class NeonReflexRulesEditModeTests
             Assert.That(normal.large, Is.EqualTo(initial.medium));
             Assert.That(normal.small, Is.Not.EqualTo(normal.medium));
             Assert.That(normal.small, Is.Not.EqualTo(normal.large));
+            Assert.That(normal.small, Is.Not.EqualTo(initial.large), "The consumed cell cannot immediately spawn the new Small.");
 
             GridSequenceState reverse = initial;
             Assert.That(GridSequenceRules.AdvanceReverse(ref reverse, 9, ref random), Is.True);
@@ -44,7 +45,45 @@ public sealed class NeonReflexRulesEditModeTests
             Assert.That(reverse.medium, Is.EqualTo(initial.large));
             Assert.That(reverse.large, Is.Not.EqualTo(reverse.small));
             Assert.That(reverse.large, Is.Not.EqualTo(reverse.medium));
+            Assert.That(reverse.large, Is.Not.EqualTo(initial.small), "The consumed cell cannot immediately spawn the new Large in Reverse.");
         }
+    }
+
+    [TestCase(4)]
+    [TestCase(9)]
+    [TestCase(16)]
+    [TestCase(25)]
+    public void ReplacementAvoidsConsumedCellAcrossGridSizesAndDirectionChanges(int cellCount)
+    {
+        var random = new DeterministicRandom(1731);
+        Assert.That(GridSequenceRules.Initialize(cellCount, ref random, out GridSequenceState state), Is.True);
+        for (int tap = 0; tap < 256; tap++)
+        {
+            bool reverse = tap % 7 < 3;
+            int consumed = reverse ? state.small : state.large;
+            bool accepted = reverse ? GridSequenceRules.AdvanceReverse(ref state, cellCount, ref random)
+                : GridSequenceRules.AdvanceNormal(ref state, cellCount, ref random);
+            Assert.That(accepted, Is.True);
+            Assert.That(GridSequenceRules.Validate(state, cellCount), Is.True);
+            Assert.That(state.small, Is.Not.EqualTo(consumed));
+            Assert.That(state.medium, Is.Not.EqualTo(consumed));
+            Assert.That(state.large, Is.Not.EqualTo(consumed));
+        }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void NoSpareCellRejectsAdvanceWithoutMutatingStateOrRandom(bool reverse)
+    {
+        var random = new DeterministicRandom(1731);
+        var state = new GridSequenceState(0, 1, 2);
+        GridSequenceState original = state;
+        uint originalRandom = random.State;
+        bool accepted = reverse ? GridSequenceRules.AdvanceReverse(ref state, 3, ref random)
+            : GridSequenceRules.AdvanceNormal(ref state, 3, ref random);
+        Assert.That(accepted, Is.False);
+        Assert.That(state, Is.EqualTo(original));
+        Assert.That(random.State, Is.EqualTo(originalRandom));
     }
 
     [Test]

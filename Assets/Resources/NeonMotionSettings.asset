@@ -60,9 +60,14 @@ MonoBehaviour:
   vignetteEdgeWidth: 0.12
   damageShakeDuration: 0.15
   damageShakeViewportFraction: 0.004
+  successParticlesEnabled: 0
   successParticleCount: 6
   successParticleDuration: 0.22
   successParticleTravel: 0.02
+  smileyFadeInDuration: 0.08
+  smileyHoldDuration: 0.14
+  smileyFadeOutDuration: 0.22
+  smileyCellFraction: 0.56
   terminalGridDimMultiplier: 0.22
   progressDuration: 0.12
   resourceDuration: 0.22

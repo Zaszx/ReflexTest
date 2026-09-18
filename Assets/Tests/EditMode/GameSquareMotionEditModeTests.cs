@@ -137,7 +137,7 @@ public sealed class GameSquareMotionEditModeTests
             AssertOrdered(cells[sequence.small], cells[sequence.medium], cells[sequence.large]);
         }
         foreach (GameSquare cell in cells) cell.AdvancePresentation(1f);
-        Assert.That(reuseCount, Is.GreaterThan(0));
+        Assert.That(reuseCount, Is.Zero, "The just-consumed cell must remain empty for this sequence advance.");
         Assert.That(CountChildren(cells), Is.EqualTo(initialObjects), "Exit effects must reuse their preallocated graphics.");
         AssertSettled(cells[sequence.small], .4f);
         AssertSettled(cells[sequence.medium], .7f);
@@ -512,6 +512,70 @@ public sealed class GameSquareMotionEditModeTests
         cell.SetAnimationsPaused(false);
         cell.PlayTapFeedback(true); cell.AdvancePresentation(1f);
         Assert.That(cell.bgImage.color, Is.EqualTo(destinationFill), "Correct feedback must decay to the newly supplied base palette.");
+    }
+
+    [Test]
+    public void SmileyFadesSmoothlyAndSurvivesRoleReuseWithoutInterceptingTouches()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        Random.State rng = Random.state;
+        cell.PlayTapFeedback(true);
+        Image face = cell.transform.Find("TapSmiley").GetComponent<Image>();
+        Assert.That(face.sprite, Is.Not.Null);
+        Assert.That(face.sprite.name, Does.StartWith("right"));
+        Assert.That(face.raycastTarget, Is.False);
+        Assert.That(face.color.a, Is.Zero);
+        cell.PlayConsumedFeedback();
+        cell.SetLitSize(GameSquare.LitSize.Small, true);
+        cell.AdvancePresentation(NeonMotion.T.smileyFadeInDuration * .5f);
+        Assert.That(face.color.a, Is.GreaterThan(0f).And.LessThan(1f));
+        Assert.That(cell.currentLitSize, Is.EqualTo(GameSquare.LitSize.Small));
+        cell.AdvancePresentation(NeonMotion.T.smileyFadeInDuration * .5f + NeonMotion.T.smileyHoldDuration);
+        Assert.That(face.color.a, Is.EqualTo(1f).Within(.0001f));
+        cell.AdvancePresentation(NeonMotion.T.smileyFadeOutDuration * .5f);
+        Assert.That(face.color.a, Is.GreaterThan(0f).And.LessThan(1f));
+        cell.AdvancePresentation(NeonMotion.T.smileyFadeOutDuration);
+        Assert.That(face.gameObject.activeSelf, Is.False);
+        Assert.That(Random.state, Is.EqualTo(rng), "Face selection must not advance Unity gameplay randomness.");
+    }
+
+    [Test]
+    public void WrongSmileyPausesAndClearsWhenPresentationIsNormalized()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Small);
+        cell.PlayTapFeedback(false);
+        Image face = cell.transform.Find("TapSmiley").GetComponent<Image>();
+        Assert.That(face.sprite.name, Is.EqualTo("wrong"));
+        cell.AdvancePresentation(.04f);
+        float opacity = face.color.a;
+        cell.SetAnimationsPaused(true);
+        cell.AdvancePresentation(1f);
+        Assert.That(face.color.a, Is.EqualTo(opacity));
+        cell.SetAnimationsPaused(false);
+        cell.SetBasePalette(Color.black, Color.cyan);
+        Assert.That(face.gameObject.activeSelf, Is.False);
+        cell.PlayTapFeedback(false);
+        cell.NormalizePresentation();
+        Assert.That(face.gameObject.activeSelf, Is.False);
+    }
+
+    [Test]
+    public void SmileyAssetsAreAvailableAndRepeatedTapsReuseOneImage()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        Image face = cell.transform.Find("TapSmiley").GetComponent<Image>();
+        int initialChildren = cell.GetComponentsInChildren<Transform>(true).Length;
+        Assert.That(face.material.shader.isSupported, Is.True);
+        var seen = new HashSet<string>();
+        string previous = null;
+        for (int tap = 0; tap < 64; tap++)
+        {
+            cell.PlayTapFeedback(true);
+            Assert.That(face.sprite.name, Is.Not.EqualTo(previous));
+            seen.Add(previous = face.sprite.name);
+        }
+        Assert.That(seen.Count, Is.EqualTo(4));
+        Assert.That(cell.GetComponentsInChildren<Transform>(true).Length, Is.EqualTo(initialChildren));
     }
 
     private GameSquare Create(GameSquare.LitSize size)

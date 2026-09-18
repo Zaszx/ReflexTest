@@ -20,6 +20,8 @@ The horizontal recoil moves `GameplayTapOffset`, the wrapper containing the comp
 
 `NeonTapParticles` is one UI mesh with a fixed pool of 48 glints. Defaults emit six short green/cyan glints for 0.22 seconds from the captured perimeter. It has no per-tap objects, caps decoration when slots are full, and uses its own decorative PRNG; target-selection gameplay RNG is never read or advanced.
 
+Success particles are currently disabled by `successParticlesEnabled` in `NeonMotionSettings.asset`; the implementation and six-particle tuning remain available for re-enabling. Accepted taps now also use one reusable `TapSmiley` Image per cell: the wrong face for mistakes, or one of four happy faces without consecutive repeats. The default fade-in/hold/fade-out is 0.08/0.14/0.22 seconds, at 56% of cell width. These settings share the same motion asset. Smileys pause and clear with cell presentation, sit behind target outlines, and never intercept input. `GameSquare.Smiley.cs` centers the artwork using cached cropped sprites; `NeonSmileyWhiteKey.shader` removes the originals' baked white background during rendering without editing their pixels. Imported copies live in `Assets/Resources/FeedbackSmileys/`.
+
 Terminal feedback takes the shared owner, clears particles, and preserves the fatal damage cue without starting another one. Reserve exhaustion resets ordinary tap feedback. Settings/application pause stops presentation advancement; level replacement, navigation, and inactive gameplay reset the wrapper, edge, particles, and captured pose. Reduced Effects disables recoil and particles, and reduces edge/local intensity while preserving meaningful local color feedback.
 
 ## Level-complete announcement
@@ -30,7 +32,7 @@ Terminal feedback takes the shared owner, clears particles, and preserves the fa
 
 ## Verification status
 
-- Current focused EditMode result: **75 passed**.
+- Current focused EditMode result: **78 passed**, including smiley fades, pause/reset, role reuse, artwork availability, and bounded image reuse. Smiley runtime captures: `Artifacts/Motion/SmileyFeedback/540x1200/` (normal success, mistake, and Reverse success).
 - **53 runtime checks passed** at 720 × 1280, including a visible particle mesh from a translated/rotated/scaled target, correct touch raycasts during recoil, priority, input integrity, external pause, the actual L2 → L3 challenge, and onboarding replay isolation. Report and captures: `Artifacts/UI/TapFeedbackRenderCheck/720x1280/`.
 - **5,021 grid-resize assertions passed**, including every different 2×2–5×5 pair, Reduced Effects, zero-duration transitions, and viewport refitting. Report: `Artifacts/LevelTransition/TapFeedbackFinal/405x900/GridResize/checks.txt`.
 - **55 damage/run-ending** and **60 level-transition** checks passed, covering terminal persistence, fresh input, timer/resource freezing, checkpoint restoration, cancellation, and victory. Reports: `Artifacts/DamageEnding/TapFeedbackFinal/405x900/checks.txt` and `Artifacts/LevelTransition/TapFeedbackFinal/405x900/checks.txt`.

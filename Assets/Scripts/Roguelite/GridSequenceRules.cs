@@ -18,22 +18,24 @@ public static class GridSequenceRules
     }
     public static bool AdvanceNormal(ref GridSequenceState state, int count, ref DeterministicRandom rng)
     {
-        if (!Validate(state, count)) return false;
-        int nextSmall = PickUnused(count, state.small, state.medium, ref rng); // exclude new medium/large only
+        if (!Validate(state, count) || count < 4) return false;
+        // Keep the two promoted roles and the just-consumed cell unavailable.
+        int nextSmall = PickUnused(count, state.small, state.medium, ref rng, state.large);
         state = new GridSequenceState(nextSmall, state.small, state.medium); return true;
     }
     public static bool AdvanceReverse(ref GridSequenceState state, int count, ref DeterministicRandom rng)
     {
-        if (!Validate(state, count)) return false;
-        int nextLarge = PickUnused(count, state.medium, state.large, ref rng); // exclude new small/medium only
+        if (!Validate(state, count) || count < 4) return false;
+        int nextLarge = PickUnused(count, state.medium, state.large, ref rng, state.small);
         state = new GridSequenceState(state.medium, state.large, nextLarge); return true;
     }
-    private static int PickUnused(int count, int excludedA, int excludedB, ref DeterministicRandom rng)
+    private static int PickUnused(int count, int excludedA, int excludedB, ref DeterministicRandom rng, int excludedC = -1)
     {
         int choices = count - (excludedA >= 0 ? 1 : 0) - (excludedB >= 0 && excludedB != excludedA ? 1 : 0);
+        if (excludedC >= 0 && excludedC != excludedA && excludedC != excludedB) choices--;
         if (choices <= 0) return -1;
         int pick = rng.Range(0, choices);
-        for (int i = 0; i < count; i++) if (i != excludedA && i != excludedB && pick-- == 0) return i;
+        for (int i = 0; i < count; i++) if (i != excludedA && i != excludedB && i != excludedC && pick-- == 0) return i;
         return 0;
     }
 }

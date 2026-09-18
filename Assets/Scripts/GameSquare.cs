@@ -6,7 +6,7 @@ using UnityEngine.UI;
 /// Immediate logical target roles with owned, interruptible visual motion.
 /// Only presentation children move; the cell and gameplay transforms never do.
 /// </summary>
-public class GameSquare : MonoBehaviour, IPointerDownHandler
+public partial class GameSquare : MonoBehaviour, IPointerDownHandler
 {
     [Header("UI Components")]
     public Image bgImage;
@@ -109,6 +109,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         feedbackActive = false;
         ClearErrorLayer();
         ClearSuccessLayer();
+        ClearSmiley();
         ApplyCurrentAppearance();
         if (targetFrame != null)
         {
@@ -213,6 +214,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
             successFrame.LineWidth = NeonTheme.T.targetStrokeWidth;
         }
         successFrame.gameObject.SetActive(false);
+        InitializeSmiley();
         NormalizePresentation();
     }
 
@@ -297,6 +299,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         feedbackElapsed = 0f;
         feedbackActive = feedbackDuration > 0f;
         if (correct) BeginSuccessLayer(); else BeginErrorLayer();
+        PlaySmiley(correct);
         bgImage.color = feedbackActive ? feedbackStart : CurrentBaseColor();
     }
 
@@ -312,6 +315,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
     public void AdvancePresentation(float delta)
     {
         if (animationsPaused || delta <= 0f || !gameObject.activeInHierarchy) return;
+        AdvanceSmiley(delta);
         if (targetAnimating && !terminalPresentation)
         {
             roleElapsed += delta;
@@ -373,6 +377,7 @@ public class GameSquare : MonoBehaviour, IPointerDownHandler
         feedbackActive = false;
         ClearErrorLayer();
         ClearSuccessLayer();
+        ClearSmiley();
         CancelExit();
         if (bgImage != null) bgImage.color = CurrentBaseColor();
         if (settleTargets) SettleTarget();
