@@ -5,7 +5,7 @@ using UnityEngine.UI;
 [RequireComponent(typeof(CanvasRenderer))]
 public sealed class NeonUpgradeGraphic : MaskableGraphic
 {
-    public enum Kind { Card, Socket, Health, Reserve, Stabilizer, Reverse, Coin }
+    public enum Kind { Card, Socket, Health, Reserve, Stabilizer, Reverse, Coin, Rebound, Healing }
     public Kind kind;
     [Range(0f, 2f)] public float intensity = 1f;
     [Range(0f, .5f)] public float surfaceTint = .07f;
@@ -30,6 +30,8 @@ public sealed class NeonUpgradeGraphic : MaskableGraphic
             case Kind.Stabilizer: Stabilizer(mesh, r, accent); break;
             case Kind.Reverse: Reverse(mesh, r, accent); break;
             case Kind.Coin: Coin(mesh, r, accent); break;
+            case Kind.Rebound: Rebound(mesh, r, accent); break;
+            case Kind.Healing: Healing(mesh, r, accent); break;
         }
     }
 
@@ -105,6 +107,25 @@ public sealed class NeonUpgradeGraphic : MaskableGraphic
         Glow(m,new[]{new Vector2(r.center.x-x,y-r.height*.16f),new Vector2(r.center.x+x,y-r.height*.16f)},a,w,1f);
         Glow(m,new[]{new Vector2(r.center.x-x+head,y+r.height*.16f+head),new Vector2(r.center.x-x,y+r.height*.16f),new Vector2(r.center.x-x+head,y+r.height*.16f-head)},a,w,1f);
         Glow(m,new[]{new Vector2(r.center.x+x-head,y-r.height*.16f+head),new Vector2(r.center.x+x,y-r.height*.16f),new Vector2(r.center.x+x-head,y-r.height*.16f-head)},a,w,1f);
+    }
+
+    private static void Rebound(VertexHelper m, Rect r, Color a)
+    {
+        float w = Mathf.Min(r.width, r.height) * .31f;
+        Vector2 c = r.center;
+        // A struck core rebounding along an open arc reads as a brief recovery, rather than a second health icon.
+        Glow(m, new[] { c + new Vector2(-w, -w * .25f), c + new Vector2(-w * .12f, w * .38f), c + new Vector2(w * .58f, w * .06f) }, a, 4f, 1f);
+        Glow(m, new[] { c + new Vector2(w * .35f, w * .30f), c + new Vector2(w * .58f, w * .06f), c + new Vector2(w * .23f, -w * .02f) }, a, 4f, 1f);
+        Circle(m, c + new Vector2(-w * .38f, -w * .25f), w * .22f, a, 24, .85f);
+    }
+
+    private static void Healing(VertexHelper m, Rect r, Color a)
+    {
+        Heart(m, r, a);
+        float s = Mathf.Min(r.width, r.height) * .18f;
+        Vector2 c = r.center + new Vector2(r.width * .25f, r.height * .19f);
+        Glow(m, new[] { c + Vector2.left * s, c + Vector2.right * s }, a, 3f, .9f);
+        Glow(m, new[] { c + Vector2.down * s, c + Vector2.up * s }, a, 3f, .9f);
     }
 
     private static void Coin(VertexHelper m, Rect r, Color a)

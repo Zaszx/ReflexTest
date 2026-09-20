@@ -49,6 +49,39 @@ public sealed class NeonReflexRulesEditModeTests
         }
     }
 
+    [TestCase(2)]
+    [TestCase(3)]
+    [TestCase(4)]
+    [TestCase(5)]
+    public void VariableSequenceCountsPreserveRankOrderInNormalAndReverse(int outlineCount)
+    {
+        var random = new DeterministicRandom((uint)(100 + outlineCount));
+        Assert.That(GridSequenceRules.Initialize(9, outlineCount, ref random, out GridSequenceState initial), Is.True);
+        Assert.That(initial.Count, Is.EqualTo(outlineCount));
+        Assert.That(GridSequenceRules.Validate(initial, 9), Is.True);
+
+        GridSequenceState normal = initial;
+        Assert.That(GridSequenceRules.AdvanceNormal(ref normal, 9, ref random), Is.True);
+        for (int rank = 1; rank < outlineCount; rank++) Assert.That(normal.targets[rank], Is.EqualTo(initial.targets[rank - 1]));
+
+        GridSequenceState reverse = initial;
+        Assert.That(GridSequenceRules.AdvanceReverse(ref reverse, 9, ref random), Is.True);
+        for (int rank = 0; rank < outlineCount - 1; rank++) Assert.That(reverse.targets[rank], Is.EqualTo(initial.targets[rank + 1]));
+    }
+
+    [Test]
+    public void LegacyEndpointAdaptersFollowTheFirstMiddleAndLastRanks()
+    {
+        GridSequenceState two = new GridSequenceState(new[] { 4, 7 });
+        GridSequenceState five = new GridSequenceState(new[] { 1, 3, 5, 6, 8 });
+        Assert.That(two.small, Is.EqualTo(4));
+        Assert.That(two.medium, Is.EqualTo(7));
+        Assert.That(two.large, Is.EqualTo(7));
+        Assert.That(five.small, Is.EqualTo(1));
+        Assert.That(five.medium, Is.EqualTo(5));
+        Assert.That(five.large, Is.EqualTo(8));
+    }
+
     [TestCase(4)]
     [TestCase(9)]
     [TestCase(16)]
@@ -73,17 +106,50 @@ public sealed class NeonReflexRulesEditModeTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public void NoSpareCellRejectsAdvanceWithoutMutatingStateOrRandom(bool reverse)
+    public void FullCapacityReusesConsumedCellButReservedConsumedCellRejectsWithoutMutationOrRandom(bool reverse)
     {
         var random = new DeterministicRandom(1731);
         var state = new GridSequenceState(0, 1, 2);
+        bool acceptedAtCapacity = reverse ? GridSequenceRules.AdvanceReverse(ref state, 3, ref random)
+            : GridSequenceRules.AdvanceNormal(ref state, 3, ref random);
+        Assert.That(acceptedAtCapacity, Is.True);
+
+        state = new GridSequenceState(0, 1, 2);
         GridSequenceState original = state;
         uint originalRandom = random.State;
-        bool accepted = reverse ? GridSequenceRules.AdvanceReverse(ref state, 3, ref random)
-            : GridSequenceRules.AdvanceNormal(ref state, 3, ref random);
+        int reservedConsumed = reverse ? 0 : 2;
+        bool accepted = reverse ? GridSequenceRules.AdvanceReverse(ref state, 3, ref random, reservedConsumed)
+            : GridSequenceRules.AdvanceNormal(ref state, 3, ref random, reservedConsumed);
         Assert.That(accepted, Is.False);
-        Assert.That(state, Is.EqualTo(original));
+        CollectionAssert.AreEqual(original.targets, state.targets);
         Assert.That(random.State, Is.EqualTo(originalRandom));
+    }
+
+    [TestCase(2)]
+    [TestCase(3)]
+    [TestCase(4)]
+    [TestCase(5)]
+    public void EverySupportedCountCanAdvanceAtFullCapacityByReusingTheConsumedCell(int outlineCount)
+    {
+        int[] targets = new int[outlineCount];
+        for (int i = 0; i < targets.Length; i++) targets[i] = i;
+        var random = new DeterministicRandom(19);
+        GridSequenceState normal = new GridSequenceState(targets);
+        GridSequenceState reverse = new GridSequenceState(targets);
+        Assert.That(GridSequenceRules.AdvanceNormal(ref normal, outlineCount, ref random), Is.True);
+        Assert.That(GridSequenceRules.AdvanceReverse(ref reverse, outlineCount, ref random), Is.True);
+        CollectionAssert.AreEquivalent(targets, normal.targets);
+        CollectionAssert.AreEquivalent(targets, reverse.targets);
+    }
+
+    [Test]
+    public void ReservedCellIsExcludedDuringInitializationAndAdvanceWhenAlternativesExist()
+    {
+        var random = new DeterministicRandom(8);
+        Assert.That(GridSequenceRules.Initialize(9, 4, ref random, out GridSequenceState state, reservedCell: 8), Is.True);
+        CollectionAssert.DoesNotContain(state.targets, 8);
+        Assert.That(GridSequenceRules.AdvanceNormal(ref state, 9, ref random, reservedCell: 8), Is.True);
+        CollectionAssert.DoesNotContain(state.targets, 8);
     }
 
     [Test]

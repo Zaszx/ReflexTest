@@ -331,29 +331,7 @@ public sealed partial class GameManager : MonoBehaviour
         if (!SimulationIsActive)
             return;
 
-        float deltaTime = Mathf.Max(0f, Time.deltaTime);
-        float simulationDelta = CalculateAvailableGameplayDelta(deltaTime);
-        GameplayTimerTransition timerTransition = GameplayTimerRules.Tick(sessionRun, deltaTime);
-
-        AdvanceReverseCooldown(simulationDelta);
-        AdvanceGridMotion(simulationDelta);
-        UpdateGameplayUI();
-        saveDirty = true;
-        checkpointElapsed += simulationDelta;
-
-        if (timerTransition == GameplayTimerTransition.EnteredReserve)
-        {
-            TriggerHaptic();
-            SaveRealRunCritical();
-        }
-        else if (timerTransition == GameplayTimerTransition.ReserveDepleted)
-        {
-            FailRun("RESERVE DEPLETED");
-            return;
-        }
-
-        if (checkpointElapsed >= gameConfig.saveCheckpointIntervalSeconds)
-            SaveRealRunCritical();
+        TickActiveGameplay(Mathf.Max(0f, Time.deltaTime));
     }
 
     private float CalculateAvailableGameplayDelta(float requestedDelta)
@@ -482,7 +460,7 @@ public sealed partial class GameManager : MonoBehaviour
         RestoreRandom();
         int cellCount = Mathf.Max(2, activeLevel.gridSize);
         cellCount *= cellCount;
-        if (!GridSequenceRules.Initialize(cellCount, ref random, out GridSequenceState sequence))
+        if (!GridSequenceRules.Initialize(cellCount, activeLevel.outlineCount, ref random, out GridSequenceState sequence))
             sequence = new GridSequenceState(0, 1, 2);
 
         ActiveLevelStateData levelState = new ActiveLevelStateData
@@ -493,6 +471,8 @@ public sealed partial class GameManager : MonoBehaviour
             smallIndex = sequence.small,
             mediumIndex = sequence.medium,
             largeIndex = sequence.large,
+            targetIndices = sequence.targets,
+            effectiveOutlineCount = sequence.Count,
             reverseActive = false,
             reverseCorrectTapsRemaining = 0,
             reverseCooldownRemaining = 0f,
@@ -508,6 +488,7 @@ public sealed partial class GameManager : MonoBehaviour
 
         sessionRun.currentLevelId = activeLevel.stableId;
         sessionRun.levelState = levelState;
+        InitializeRecoveryLevel();
         sessionRun.betweenLevels = false;
         StoreRandom();
     }
@@ -538,6 +519,7 @@ public sealed partial class GameManager : MonoBehaviour
         SetSquareAnimationsPaused(applicationSuspended);
         RepairOrRestoreSequence();
         ApplyGridMotionState(false, 0f);
+        ConfigureGameplayFeatures();
         ApplyLevelTheme();
         UpdateGameplayUI();
 
@@ -642,6 +624,7 @@ public sealed partial class GameManager : MonoBehaviour
         float worstRotation = Mathf.Approximately(activeLevel.rotateSpeed, 0f) ? 1f : Mathf.Sqrt(2f);
         float available = Mathf.Max(1f, shortest - 2f * (globalPadding + levelPadding + travel));
         baseGridSide = Mathf.Max(1f, available / (maximumScale * worstRotation));
+        FitEnemyApproachCorridor(boundsSize, maximumScale, worstRotation);
 
         float targetCell = baseGridSide / Mathf.Max(2, activeLevel.gridSize);
         if (targetCell < gameConfig.minimumTouchTargetPixels)
@@ -745,23 +728,26 @@ public sealed partial class GameManager : MonoBehaviour
             activeLevel.cellColor, activeLevel.outlineColor,
             activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale);
         square.onClicked = OnSquareClicked;
+        square.pointerGate = GateGridPointer;
         return square;
     }
 
     private void RepairOrRestoreSequence()
     {
         ActiveLevelStateData levelState = sessionRun.levelState;
-        GridSequenceState sequence = new GridSequenceState(levelState.smallIndex, levelState.mediumIndex, levelState.largeIndex);
+        GridSequenceState sequence = ReadSequence(levelState);
         if (!GridSequenceRules.Validate(sequence, instantiatedSquares.Count))
         {
             RestoreRandom();
-            GridSequenceRules.Initialize(instantiatedSquares.Count, ref random, out sequence);
-            levelState.smallIndex = sequence.small;
-            levelState.mediumIndex = sequence.medium;
-            levelState.largeIndex = sequence.large;
+            int count = levelState.effectiveOutlineCount >= 2 ? levelState.effectiveOutlineCount : activeLevel.outlineCount;
+            GridSequenceRules.Initialize(instantiatedSquares.Count, Mathf.Min(count, instantiatedSquares.Count), ref random, out sequence);
             StoreRandom();
             Debug.LogWarning("Invalid saved target sequence was rebuilt deterministically.");
         }
+        CommitSequence(levelState, sequence);
+        if (levelState.heart != null && levelState.heart.IsReserved &&
+            (levelState.heart.cellIndex >= instantiatedSquares.Count || Array.IndexOf(sequence.targets, levelState.heart.cellIndex) >= 0))
+            HeartRules.Clear(levelState.heart);
         ApplySequenceVisuals(false);
     }
 
@@ -770,12 +756,11 @@ public sealed partial class GameManager : MonoBehaviour
         ActiveLevelStateData levelState = sessionRun.levelState;
         // One assignment per cell from the committed snapshot. Clearing every
         // outline first would discard the current rendered size on every tap.
+        GridSequenceState sequence = ReadSequence(levelState);
         for (int i = 0; i < instantiatedSquares.Count; i++)
         {
-            var role = i == levelState.smallIndex ? GameSquare.LitSize.Small :
-                i == levelState.mediumIndex ? GameSquare.LitSize.Medium :
-                i == levelState.largeIndex ? GameSquare.LitSize.Large : GameSquare.LitSize.None;
-            instantiatedSquares[i].SetLitSize(role, animate);
+            instantiatedSquares[i].SetTargetRank(Array.IndexOf(sequence.targets, i), sequence.Count,
+                activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale, animate);
         }
     }
 
@@ -791,7 +776,7 @@ public sealed partial class GameManager : MonoBehaviour
             OnPracticeSquareClicked(square);
             return;
         }
-        if (!SimulationIsActive || square == null || Time.frameCount == transitionInputReadyFrame)
+        if (!SimulationIsActive || square == null)
             return;
 
         int clickedIndex = square.gridY * Mathf.Max(2, activeLevel.gridSize) + square.gridX;
@@ -799,7 +784,9 @@ public sealed partial class GameManager : MonoBehaviour
             return;
 
         ActiveLevelStateData levelState = sessionRun.levelState;
-        int correctIndex = levelState.reverseActive ? levelState.smallIndex : levelState.largeIndex;
+        if (TryHandleHeartTap(clickedIndex)) return;
+        int[] targets = ReadSequence(levelState).targets;
+        int correctIndex = targets[levelState.reverseActive ? 0 : targets.Length - 1];
         if (clickedIndex != correctIndex)
         {
             HandleMistake(square);
@@ -813,7 +800,7 @@ public sealed partial class GameManager : MonoBehaviour
     {
         sessionRun.currentHealth = Mathf.Max(0, sessionRun.currentHealth - 1);
         UpdateGameplayUI();
-        originatingCell.PlayDamageFeedback();
+        originatingCell?.PlayDamageFeedback();
         rogueliteUI.PlayHealthDamageFeedback();
         TriggerScreenFlash(false);
         TriggerHaptic();
@@ -823,6 +810,9 @@ public sealed partial class GameManager : MonoBehaviour
             if (sessionRun.currentHealth <= 0) SetOnboardingStep(OnboardingStep.HealthRetry);
             return;
         }
+        if (originatingCell != null && sessionRun.currentHealth > 0)
+            ReboundRules.TryActivate(sessionRun.levelState.rebound, sessionRun.upgrades.reboundOwned, true, RunRecoverySettings);
+        UpdateGameplayUI();
         if (sessionRun.currentHealth <= 0)
             FailRun("HEALTH DEPLETED");
         else
@@ -832,15 +822,15 @@ public sealed partial class GameManager : MonoBehaviour
     private void HandleCorrectTap()
     {
         ActiveLevelStateData levelState = sessionRun.levelState;
-        GridSequenceState sequence = new GridSequenceState(levelState.smallIndex, levelState.mediumIndex, levelState.largeIndex);
+        GridSequenceState sequence = ReadSequence(levelState);
         RestoreRandom();
 
         bool reverseWasActive = levelState.reverseActive;
-        int consumedIndex = reverseWasActive ? levelState.smallIndex : levelState.largeIndex;
+        int consumedIndex = sequence.targets[reverseWasActive ? 0 : sequence.Count - 1];
         if (IsValidSquareIndex(consumedIndex)) feedbackController.CaptureSuccessPose(instantiatedSquares[consumedIndex]);
         bool advanced = reverseWasActive
-            ? GridSequenceRules.AdvanceReverse(ref sequence, instantiatedSquares.Count, ref random)
-            : GridSequenceRules.AdvanceNormal(ref sequence, instantiatedSquares.Count, ref random);
+            ? GridSequenceRules.AdvanceReverse(ref sequence, instantiatedSquares.Count, ref random, ReservedHeartCell)
+            : GridSequenceRules.AdvanceNormal(ref sequence, instantiatedSquares.Count, ref random, ReservedHeartCell);
         if (!advanced)
         {
             Debug.LogError("Target sequence could not advance; input was ignored safely.");
@@ -849,9 +839,8 @@ public sealed partial class GameManager : MonoBehaviour
 
         TriggerScreenFlash(true);
 
-        levelState.smallIndex = sequence.small;
-        levelState.mediumIndex = sequence.medium;
-        levelState.largeIndex = sequence.large;
+        CommitSequence(levelState, sequence);
+        if (!IsOnboardingActive) ReboundRules.EndOnCorrect(levelState.rebound, RunRecoverySettings);
         levelState.objectiveProgress++;
         if (reverseWasActive)
             levelState.reverseCorrectTapsRemaining = Mathf.Max(0, levelState.reverseCorrectTapsRemaining - 1);
@@ -859,7 +848,7 @@ public sealed partial class GameManager : MonoBehaviour
         if (IsValidSquareIndex(consumedIndex))
         {
             instantiatedSquares[consumedIndex].PlayTapFeedback(true);
-            instantiatedSquares[consumedIndex].PlayConsumedFeedback();
+            instantiatedSquares[consumedIndex].PlayConsumedFeedback(reverseWasActive);
         }
         ApplySequenceVisuals(true);
         if (reverseWasActive && IsValidSquareIndex(levelState.largeIndex))
@@ -877,6 +866,7 @@ public sealed partial class GameManager : MonoBehaviour
             return;
         }
 
+        TrySpawnHeartAfterCorrect();
         if (reverseWasActive && levelState.reverseCorrectTapsRemaining <= 0)
             BeginReverseExit();
         else if (!reverseWasActive)
@@ -942,6 +932,7 @@ public sealed partial class GameManager : MonoBehaviour
             sessionRun.levelState.objectiveProgress < Mathf.Max(1, activeLevel.requiredCorrectClicks))
             return;
         state = FlowState.LevelComplete;
+        EndGameplayFeatures();
         terminalRequested = true;
         presentationToken++;
         feedbackController.ResetImmediate();
@@ -992,6 +983,7 @@ public sealed partial class GameManager : MonoBehaviour
 
         if (isDebugSession)
         {
+            EndGameplayFeatures();
             terminalRequested = true;
             presentationToken++;
             ConfigureFailPrimary("RETURN TO MENU", ReturnToMainMenu);
@@ -1030,6 +1022,7 @@ public sealed partial class GameManager : MonoBehaviour
         if (sessionRun == null)
             return;
 
+        EndGameplayFeatures();
         if (!RunEconomyRules.TryBankAndClearActiveRun(
                 saveData,
                 sessionRun.runId,
@@ -1164,6 +1157,7 @@ public sealed partial class GameManager : MonoBehaviour
         levelState.movementPosition = position;
         levelState.movementDirection = direction;
         gridContainer.anchoredPosition = position;
+        UpdateEnemyMotionEnvelope(allowedRoom);
     }
 
     private void UpdateGameplayUI()
@@ -1187,10 +1181,12 @@ public sealed partial class GameManager : MonoBehaviour
             levelState.reverseActive,
             isDebugSession,
             levelState.reverseCorrectTapsRemaining);
+        rogueliteUI.SetReboundFeedback(!IsOnboardingActive && levelState.rebound != null && levelState.rebound.active);
     }
 
     public void ReturnToMainMenu()
     {
+        HideGameplayFeatureViews();
         if (IsOnboardingActive) { RequestOnboardingExit(false, true); return; }
         AcknowledgeCommittedRunReport();
         CancelRunEndingPresentation();
@@ -1250,6 +1246,7 @@ public sealed partial class GameManager : MonoBehaviour
 
     public void OpenUpgradeShop()
     {
+        HideGameplayFeatureViews();
         if (IsOnboardingActive) return;
         AcknowledgeCommittedRunReport();
         CancelRunEndingPresentation();

@@ -8,6 +8,8 @@ public class LevelData : ScriptableObject
     public string stableId = "neon-reflex-level-001";
     public int levelNumber = 1;
     public int gridSize = 3; // n x n grid
+    [Tooltip("Active outlined cells, ordered from smallest to largest during play.")]
+    [Range(2, 5)] public int outlineCount = 3;
     public int requiredCorrectClicks = 10; // x correct clicks
     public float timeLimit = 30f; // t seconds time limit
     [Min(0)] public long completionCoinReward = 10;
@@ -15,6 +17,8 @@ public class LevelData : ScriptableObject
     [Header("Gameplay Modifiers")]
     [Tooltip("Allows the global Reverse mechanic to trigger during this level.")]
     public bool reverseEnabled;
+    [Header("Enemy pressure")]
+    public EnemyLevelSettings enemies = new EnemyLevelSettings();
 
     [Tooltip("Grid rotation speed in degrees per second. Set to 0 to disable rotation.")]
     public float rotateSpeed;
@@ -52,6 +56,8 @@ public class LevelData : ScriptableObject
 
         levelNumber = Mathf.Max(1, levelNumber);
         gridSize = Mathf.Max(2, gridSize);
+        outlineCount = Mathf.Clamp(outlineCount, GridSequenceRules.MinimumOutlineCount,
+            Mathf.Min(GridSequenceRules.MaximumOutlineCount, gridSize * gridSize));
         requiredCorrectClicks = Mathf.Max(1, requiredCorrectClicks);
         timeLimit = Mathf.Max(0.1f, timeLimit);
         completionCoinReward = System.Math.Max(0L, completionCoinReward);
@@ -60,8 +66,8 @@ public class LevelData : ScriptableObject
         scaleCycleDuration = Mathf.Max(0.1f, scaleCycleDuration);
         movementSpeedNormalized = Mathf.Max(0f, movementSpeedNormalized);
         movementTravelPaddingNormalized = Mathf.Clamp(movementTravelPaddingNormalized, 0f, 0.2f);
-        smallScale = Mathf.Clamp(smallScale, 0.05f, 1f);
-        mediumScale = Mathf.Clamp(mediumScale, smallScale, 1f);
-        fullScale = Mathf.Max(mediumScale, fullScale);
+        smallScale = Mathf.Clamp(smallScale, 0.05f, .90f);
+        mediumScale = Mathf.Clamp(mediumScale, smallScale + .01f, .95f);
+        fullScale = Mathf.Clamp(fullScale, mediumScale + .01f, 1f);
     }
 }

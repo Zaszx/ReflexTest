@@ -164,11 +164,46 @@ public sealed class NeonSaveService
     {
         if(envelope==null)return; NormalizeLastRunResult(envelope.lastRunResult); envelope.saveVersion=Mathf.Max(1,envelope.saveVersion); if(envelope.profile==null)envelope.profile=PlayerProfileData.CreateDefault();
         var p=envelope.profile; p.saveVersion=Mathf.Max(1,p.saveVersion); p.coins=Math.Max(0,p.coins); p.lastBankedRunId=p.lastBankedRunId??string.Empty; if(!Enum.IsDefined(typeof(OnboardingStatus),p.onboardingStatus))p.onboardingStatus=OnboardingStatus.NeverSeen;
+        p.healingTier = config != null ? UpgradeCatalog.ClampTier(config, UpgradeId.Healing, p.healingTier) : Mathf.Clamp(p.healingTier, 0, 6);
         if(config!=null) { UpgradeCatalog.EnsureDefaults(config); p.maximumHealthTier=UpgradeCatalog.ClampTier(config,UpgradeId.MaximumHealth,p.maximumHealthTier); p.startingReserveTier=UpgradeCatalog.ClampTier(config,UpgradeId.StartingReserve,p.startingReserveTier); p.gridStabilizerTier=UpgradeCatalog.ClampTier(config,UpgradeId.GridStabilizer,p.gridStabilizerTier); p.reverseResistanceTier=UpgradeCatalog.ClampTier(config,UpgradeId.ReverseResistance,p.reverseResistanceTier); }
         else { p.maximumHealthTier=Mathf.Max(0,p.maximumHealthTier); p.startingReserveTier=Mathf.Max(0,p.startingReserveTier); p.gridStabilizerTier=Mathf.Max(0,p.gridStabilizerTier); p.reverseResistanceTier=Mathf.Max(0,p.reverseResistanceTier); }
         var run=envelope.activeRun; if(run==null)return; run.runId=run.runId??string.Empty; run.runSaveVersion=Mathf.Max(1,run.runSaveVersion); run.currentLevelIndex=Mathf.Max(0,run.currentLevelIndex); run.currentHealth=Mathf.Max(0,run.currentHealth); run.currentReserveSeconds=FiniteNonNegative(run.currentReserveSeconds); run.pendingCoins=Math.Max(0,run.pendingCoins); run.levelsCompleted=Math.Max(0,run.levelsCompleted); run.currentLevelId=run.currentLevelId??string.Empty; run.randomState=EncodeRandomState(ParseRandomState(run.randomState)); if(run.upgrades==null)run.upgrades=new UpgradeSnapshotData(); if(run.levelState==null)run.levelState=new ActiveLevelStateData();
         var u=run.upgrades; u.maxHealth=Mathf.Clamp(u.maxHealth,1,20); run.currentHealth=Mathf.Clamp(run.currentHealth,0,u.maxHealth); u.startingReserveSeconds=FiniteNonNegative(u.startingReserveSeconds); u.gridStabilizerMultiplier=Mathf.Clamp(FiniteNonNegative(u.gridStabilizerMultiplier),.01f,1f); u.reverseCooldownBonusSeconds=FiniteNonNegative(u.reverseCooldownBonusSeconds);
+        u.healingTier = Mathf.Clamp(u.healingTier, 0, 6);
+        u.healingLifetimeSeconds = FiniteNonNegative(u.healingLifetimeSeconds);
+        u.reboundDurationSeconds = FiniteNonNegative(u.reboundDurationSeconds);
+        u.reboundMotionMultiplier = Mathf.Clamp(FiniteNonNegative(u.reboundMotionMultiplier), .01f, 1f);
+        u.reboundRecoveryBlendSeconds = FiniteNonNegative(u.reboundRecoveryBlendSeconds);
         var l=run.levelState; l.normalTimeRemaining=FiniteNonNegative(l.normalTimeRemaining); l.reverseCooldownRemaining=FiniteNonNegative(l.reverseCooldownRemaining); l.objectiveProgress=Mathf.Max(0,l.objectiveProgress); l.reverseCorrectTapsRemaining=Mathf.Max(0,l.reverseCorrectTapsRemaining); l.smallIndex=Mathf.Max(-1,l.smallIndex);l.mediumIndex=Mathf.Max(-1,l.mediumIndex);l.largeIndex=Mathf.Max(-1,l.largeIndex); l.scalePhase=Mathf.Clamp01(FiniteNonNegative(l.scalePhase)); l.scaleDirection=l.scaleDirection<0?-1:1; if(!Finite(l.rotationAngle))l.rotationAngle=0; if(!Finite(l.movementPosition.x)||!Finite(l.movementPosition.y))l.movementPosition=Vector2.zero; if(!Finite(l.movementDirection.x)||!Finite(l.movementDirection.y)||l.movementDirection.sqrMagnitude<.0001f)l.movementDirection=Vector2.one.normalized;
+        NormalizeGameplayFeatures(run);
+    }
+
+    private static void NormalizeGameplayFeatures(ActiveRunData run)
+    {
+        var l = run.levelState;
+        // Do not replace a valid saved sequence with the current campaign's K.
+        // An old run keeps three targets until its next level boundary.
+        if (l.targetIndices == null || l.targetIndices.Length < 2 || l.targetIndices.Length > 5)
+            l.targetIndices = new[] { l.smallIndex, l.mediumIndex, l.largeIndex };
+        l.effectiveOutlineCount = l.targetIndices.Length;
+        l.smallIndex = l.targetIndices[0];
+        l.mediumIndex = l.targetIndices[l.targetIndices.Length / 2];
+        l.largeIndex = l.targetIndices[l.targetIndices.Length - 1];
+        if (l.rebound == null) l.rebound = new ReboundStateData();
+        l.rebound.activeRemainingSeconds = FiniteNonNegative(l.rebound.activeRemainingSeconds);
+        l.rebound.motionRecoveryRemainingSeconds = FiniteNonNegative(l.rebound.motionRecoveryRemainingSeconds);
+        if (!run.upgrades.reboundOwned || l.rebound.activeRemainingSeconds <= 0f) l.rebound.active = false;
+        if (!run.upgrades.reboundOwned) ReboundRules.Cancel(l.rebound);
+        if (l.heart == null) l.heart = new HeartStateData();
+        l.heart.phaseRemainingSeconds = FiniteNonNegative(l.heart.phaseRemainingSeconds);
+        l.heart.visibleRemainingSeconds = FiniteNonNegative(l.heart.visibleRemainingSeconds);
+        if (!Enum.IsDefined(typeof(HeartPhase), l.heart.phase) || l.heart.cellIndex < 0 || run.upgrades.healingTier <= 0)
+            HeartRules.Clear(l.heart);
+        // Do not refresh a restored heart's lifetime or turn a retirement into availability.
+        l.heartSpawnCooldownRemaining = FiniteNonNegative(l.heartSpawnCooldownRemaining);
+        l.heartsSpawnedThisLevel = Mathf.Max(0, l.heartsSpawnedThisLevel);
+        l.heartRandomState = EncodeRandomState(ParseRandomState(l.heartRandomState, HeartRules.DeriveLevelRandomState(run.runSeed, run.currentLevelIndex)));
+        if (l.enemies == null) l.enemies = new EnemyState();
     }
     private static void NormalizeLastRunResult(RunResultSnapshotData result)
     {

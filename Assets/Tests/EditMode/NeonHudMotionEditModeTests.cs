@@ -20,7 +20,7 @@ public sealed class NeonHudMotionEditModeTests
         isolatedSettings = Object.Instantiate(originalSettings);
         isolatedSettings.hideFlags = HideFlags.HideAndDontSave;
         SettingsField.SetValue(null, isolatedSettings);
-        NeonMotion.T.healthDuration = .2f;
+        NeonMotion.T.healthDuration = .25f;
         NeonMotion.T.progressDuration = .12f;
         NeonMotion.T.resourceDuration = .22f;
         NeonMotion.T.reducedEffectsStrength = 1f;
@@ -107,7 +107,29 @@ public sealed class NeonHudMotionEditModeTests
         Assert.That(label.text, Is.EqualTo("−3"));
         Assert.That(label.raycastTarget, Is.False);
         Assert.That(label.rectTransform.anchoredPosition, Is.EqualTo(new Vector2(92f, 24f)));
-        Assert.That(root.GetComponentsInChildren<TMP_Text>(true).Length, Is.EqualTo(2));
+        Assert.That(root.GetComponentsInChildren<TMP_Text>(true).Length, Is.EqualTo(3),
+            "Damage and positive-healing labels are preallocated once for reusable feedback.");
+        Assert.That(root.transform.Find("FloatingHealing").gameObject.activeSelf, Is.False);
+    }
+
+    [Test]
+    public void HealingUsesPositiveLabelAndClearsAnInFlightDamageTreatment()
+    {
+        hud.SetState(5, 5, 0, 10, false);
+        hud.SetState(4, 5, 0, 10, false);
+        hud.PlayHealthDamage();
+
+        hud.SetState(5, 5, 0, 10, false);
+        hud.PlayHealthHealing();
+
+        TMP_Text damage = root.transform.Find("FloatingDamage").GetComponent<TMP_Text>();
+        TMP_Text healing = root.transform.Find("FloatingHealing").GetComponent<TMP_Text>();
+        Image ghost = primaryHealth.transform.parent.Find("LostHealth").GetComponent<Image>();
+        Assert.That(damage.gameObject.activeSelf, Is.False);
+        Assert.That(ghost.color.a, Is.Zero);
+        Assert.That(healing.text, Is.EqualTo("+1"));
+        Assert.That(healing.gameObject.activeSelf, Is.True);
+        Assert.That(healing.raycastTarget, Is.False);
     }
 
     private Image Track(string name)

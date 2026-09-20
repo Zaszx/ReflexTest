@@ -15,9 +15,13 @@ MonoBehaviour:
   stableId: neon-reflex-level-033
   levelNumber: 33
   gridSize: 4
+  outlineCount: 3
   requiredCorrectClicks: 72
   timeLimit: 12.17
   completionCoinReward: 111
+  enemies:
+    enabled: 0
+    overrideDefaults: 0
   reverseEnabled: 0
   rotateSpeed: -68
   scaleEnabled: 1
@@ -35,4 +39,3 @@ MonoBehaviour:
   smallScale: 0.4
   mediumScale: 0.7
   fullScale: 1
-

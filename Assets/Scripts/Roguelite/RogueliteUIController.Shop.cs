@@ -18,7 +18,9 @@ public sealed partial class RogueliteUIController
             case UpgradeId.MaximumHealth: return NeonTheme.Hex("39FFB6");
             case UpgradeId.StartingReserve: return ShopGold;
             case UpgradeId.GridStabilizer: return NeonTheme.Hex("25CFFF");
-            default: return NeonTheme.Hex("CE70FF");
+            case UpgradeId.ReverseResistance: return NeonTheme.Hex("CE70FF");
+            case UpgradeId.Rebound: return NeonTheme.Hex("FF6B8A");
+            default: return NeonTheme.Hex("69E8A5");
         }
     }
 
@@ -58,12 +60,12 @@ public sealed partial class RogueliteUIController
         viewport.gameObject.AddComponent<RectMask2D>();
         var list = Rect("UpgradeList", viewport.transform);
         list.anchorMin = new Vector2(0, 1); list.anchorMax = Vector2.one; list.pivot = new Vector2(.5f, 1);
-        list.sizeDelta = new Vector2(0, 1192); list.anchoredPosition = Vector2.zero;
+        list.sizeDelta = new Vector2(0, 1788); list.anchoredPosition = Vector2.zero;
         var scroll = viewport.gameObject.AddComponent<ScrollRect>();
         scroll.content = list; scroll.viewport = viewport.rectTransform;
         scroll.horizontal = false; scroll.vertical = true;
         scroll.movementType = ScrollRect.MovementType.Clamped; scroll.scrollSensitivity = 40;
-        for (int i = 0; i < 4; i++) cards[(UpgradeId)i] = CreateUpgrade((UpgradeId)i, list, i);
+        for (int i = 0; i < 6; i++) cards[(UpgradeId)i] = CreateUpgrade((UpgradeId)i, list, i);
 
         shopFeedback = Txt("PurchaseFeedback", shop, "PERMANENT BENEFITS. APPLIED TO NEW RUNS.", 20, 54, 225, 970, 40, ShopMuted, 0, 0);
         shopFeedback.characterSpacing = 1;
@@ -82,7 +84,7 @@ public sealed partial class RogueliteUIController
         var frame = UpgradeArt("CardFrame", row, NeonUpgradeGraphic.Kind.Card, v.accent); Fill(frame.rectTransform);
         var socket = UpgradeArt("IconSocket", row, NeonUpgradeGraphic.Kind.Socket, v.accent);
         At(socket.rectTransform, 0, 1, 112, -130, 176, 208);
-        var icon = UpgradeArt("UpgradeGlyph", socket.transform, (NeonUpgradeGraphic.Kind)((int)NeonUpgradeGraphic.Kind.Health + index), v.accent);
+        var icon = UpgradeArt("UpgradeGlyph", socket.transform, UpgradeIcon(id), v.accent);
         At(icon.rectTransform, .5f, .5f, 0, 0, 110, 120);
 
         v.title = Txt("Title", row, "", 28, 223, -30, 372, 43, ShopText);
@@ -124,6 +126,19 @@ public sealed partial class RogueliteUIController
         return v;
     }
 
+    private static NeonUpgradeGraphic.Kind UpgradeIcon(UpgradeId id)
+    {
+        switch (id)
+        {
+            case UpgradeId.MaximumHealth: return NeonUpgradeGraphic.Kind.Health;
+            case UpgradeId.StartingReserve: return NeonUpgradeGraphic.Kind.Reserve;
+            case UpgradeId.GridStabilizer: return NeonUpgradeGraphic.Kind.Stabilizer;
+            case UpgradeId.ReverseResistance: return NeonUpgradeGraphic.Kind.Reverse;
+            case UpgradeId.Rebound: return NeonUpgradeGraphic.Kind.Rebound;
+            default: return NeonUpgradeGraphic.Kind.Healing;
+        }
+    }
+
     public void ShowShop(GameConfig gameConfig, PlayerProfileData player, bool activeRun)
     {
         config = gameConfig; profile = player; hasActiveRun = activeRun; RefreshShop();
@@ -149,7 +164,7 @@ public sealed partial class RogueliteUIController
             int tier = UpgradeCatalog.ClampTier(config, id, UpgradeCatalog.GetTier(profile, id));
             int max = definition?.tiers?.Count ?? 0;
             v.title.text = (definition?.displayName ?? id.ToString()).ToUpperInvariant();
-            v.tier.text = $"TIER {tier} / {max:00}";
+            v.tier.text = id == UpgradeId.Rebound ? (tier > 0 ? "OWNED" : "LOCKED") : $"TIER {tier} / {max:00}";
             v.description.text = definition?.description ?? "";
             float value = current?.effectValue ?? (id == UpgradeId.MaximumHealth ? config.baseHealth :
                 id == UpgradeId.StartingReserve ? config.baseStartingReserveSeconds : id == UpgradeId.GridStabilizer ? 1 : 0);

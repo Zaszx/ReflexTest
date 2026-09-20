@@ -118,6 +118,10 @@ public static class NeonPresentationQA
             foreach (ITestAdaptor child in test.Children) CollectTests(child, names);
             return;
         }
+        if (test.FullName.StartsWith("EnemyRulesEditModeTests.", StringComparison.Ordinal) ||
+            test.FullName.StartsWith("Recovery", StringComparison.Ordinal) ||
+            test.FullName.StartsWith("NeonFeatureSave", StringComparison.Ordinal))
+        { names.Add(test.FullName); return; }
         if (!test.FullName.Contains("LegacyProgressMigrationRunsOnceAndPreservesHaptics") &&
             (test.FullName.StartsWith("NeonTap", StringComparison.Ordinal) || test.FullName.StartsWith("LevelTransitionAnnouncementEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonReflexRulesEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("OnboardingProfileEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("CampaignDefinitionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("NeonMotion", StringComparison.Ordinal) || test.FullName.StartsWith("NeonHudMotion", StringComparison.Ordinal) || test.FullName.StartsWith("GameSquareMotionEditModeTests.", StringComparison.Ordinal) || test.FullName.StartsWith("TerminalFreshInputGateEditModeTests.", StringComparison.Ordinal)))
             names.Add(test.FullName);
@@ -207,12 +211,27 @@ public static class NeonPresentationQA
         Check(true, "All QA profile writes use " + service.DirectoryPath);
         string directory = Path.Combine(ProjectRoot, "Artifacts", "UI", command.stage, command.width + "x" + command.height + (command.safeTop > 0 || command.safeBottom > 0 ? "-safe-insets" : ""));
         Directory.CreateDirectory(directory);
+        if (command.action == "feature-batch" || command.action == "feature-targets")
+        {
+            yield return NeonFeatureBatchQA.Run(gm, name => Capture(directory, name, gm), Check);
+            if (command.action == "feature-batch")
+            {
+            yield return NeonRecoveryFeatureQA.Run(gm, name => Capture(directory, name, gm), Check);
+            yield return NeonEnemyFeatureQA.Run(gm, name => Capture(directory, name, gm), Check);
+            yield return NeonOnboardingQA.Run(gm, null, Check, false);
+            }
+            File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
+            Status("feature-batch-complete", directory);
+            SessionState.EraseString(PendingKey);
+            EditorApplication.isPlaying = false;
+            yield break;
+        }
         if (command.action == "tap-feedback-regression")
         {
             yield return NeonDamageEndingQA.Run(gm, command.stage, false);
             yield return NeonLevelTransitionQA.Run(gm, command.stage, false);
             yield return NeonGridResizeQA.Run(gm, command.stage, false);
-            yield return NeonOnboardingQA.Run(gm, name => Capture(directory, name, gm), Check, false);
+            yield return NeonOnboardingQA.Run(gm, null, Check, false);
             File.WriteAllLines(Path.Combine(directory, "runtime-checks.txt"), assertions);
             Status("tap-regression-complete", directory);
             EditorApplication.isPlaying = false;

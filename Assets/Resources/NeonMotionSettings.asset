@@ -29,7 +29,7 @@ MonoBehaviour:
   terminalReportTravel: 18
   targetRoleDuration: 0.11
   targetAppearDuration: 0.1
-  targetExitDuration: 0.09
+  targetExitDuration: 0.12
   targetRoleRetargetDuration: 0.065
   targetSpawnScale: 0.82
   targetSpawnAlpha: 0.65
@@ -44,7 +44,7 @@ MonoBehaviour:
   damageAccentOpacity: 0.82
   damageAccent: {r: 1, g: 0.16, b: 0.22, a: 1}
   successAccent: {r: 0.35, g: 1, b: 0.48, a: 1}
-  healthDuration: 0.2
+  healthDuration: 0.25
   healthDamageCompression: 0.91
   floatingDamageDuration: 0.26
   floatingDamageTravel: 14
@@ -64,10 +64,6 @@ MonoBehaviour:
   successParticleCount: 6
   successParticleDuration: 0.22
   successParticleTravel: 0.02
-  smileyFadeInDuration: 0.08
-  smileyHoldDuration: 0.14
-  smileyFadeOutDuration: 0.22
-  smileyCellFraction: 0.56
   terminalGridDimMultiplier: 0.22
   progressDuration: 0.12
   resourceDuration: 0.22

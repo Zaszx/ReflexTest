@@ -20,7 +20,7 @@ public static class NeonGridRendering
             canvas.additionalShaderChannels |= AdditionalCanvasShaderChannels.TexCoord1;
     }
 
-    public static void Populate(VertexHelper mesh, Rect rect, Color color, float lineWidth, float cornerFraction)
+    public static void Populate(VertexHelper mesh, Rect rect, Color color, float lineWidth, float cornerFraction, float dissolve = 0f)
     {
         mesh.Clear();
         if (rect.width <= 0 || rect.height <= 0 || lineWidth == 0) return;
@@ -32,20 +32,20 @@ public static class NeonGridRendering
         float padding = Mathf.Max(16f, Mathf.Max(0, width) * 3f);
         Vector2 extent = half + Vector2.one * padding;
         Vector4 shape = new Vector4(half.x, half.y, width, Mathf.Clamp01(cornerFraction));
-        Add(mesh, rect.center, new Vector2(-extent.x, -extent.y), color, shape);
-        Add(mesh, rect.center, new Vector2(-extent.x, extent.y), color, shape);
-        Add(mesh, rect.center, new Vector2(extent.x, extent.y), color, shape);
-        Add(mesh, rect.center, new Vector2(extent.x, -extent.y), color, shape);
+        Add(mesh, rect.center, new Vector2(-extent.x, -extent.y), color, shape, dissolve);
+        Add(mesh, rect.center, new Vector2(-extent.x, extent.y), color, shape, dissolve);
+        Add(mesh, rect.center, new Vector2(extent.x, extent.y), color, shape, dissolve);
+        Add(mesh, rect.center, new Vector2(extent.x, -extent.y), color, shape, dissolve);
         mesh.AddTriangle(0, 1, 2);
         mesh.AddTriangle(2, 3, 0);
     }
 
-    private static void Add(VertexHelper mesh, Vector2 center, Vector2 point, Color32 color, Vector4 shape)
+    private static void Add(VertexHelper mesh, Vector2 center, Vector2 point, Color32 color, Vector4 shape, float dissolve)
     {
         UIVertex vertex = UIVertex.simpleVert;
         vertex.position = center + point;
         vertex.color = color;
-        vertex.uv0 = new Vector4(point.x, point.y, 0, 0);
+        vertex.uv0 = new Vector4(point.x, point.y, Mathf.Clamp01(dissolve), 0);
         vertex.uv1 = shape;
         mesh.AddVert(vertex);
     }

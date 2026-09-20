@@ -15,6 +15,8 @@ using UnityEngine;
     public int saveVersion = 2;
     public long coins;
     public int maximumHealthTier, startingReserveTier, gridStabilizerTier, reverseResistanceTier;
+    public bool reboundOwned;
+    public int healingTier;
     public bool legacyMigrationComplete;
     public string lastBankedRunId = string.Empty;
     public OnboardingStatus onboardingStatus;
@@ -33,6 +35,12 @@ public enum OnboardingStatus
 [Serializable] public sealed class UpgradeSnapshotData
 {
     public int maximumHealthTier, startingReserveTier, gridStabilizerTier, reverseResistanceTier;
+    public bool reboundOwned;
+    public int healingTier;
+    public float healingLifetimeSeconds;
+    public float reboundDurationSeconds;
+    public float reboundMotionMultiplier;
+    public float reboundRecoveryBlendSeconds;
     public int maxHealth = 3;
     public float startingReserveSeconds = 15f;
     public float gridStabilizerMultiplier = 1f;
@@ -64,6 +72,15 @@ public enum OnboardingStatus
     public bool reserveActive;
     public int objectiveProgress;
     public int smallIndex = -1, mediumIndex = -1, largeIndex = -1;
+    // Ordered smallest-to-largest; legacy indices remain for older tools/saves.
+    public int[] targetIndices;
+    public int effectiveOutlineCount;
+    public ReboundStateData rebound = new ReboundStateData();
+    public HeartStateData heart = new HeartStateData();
+    public string heartRandomState = "1";
+    public float heartSpawnCooldownRemaining;
+    public int heartsSpawnedThisLevel;
+    public EnemyState enemies = new EnemyState();
     public bool reverseActive;
     public int reverseCorrectTapsRemaining;
     public float reverseCooldownRemaining;

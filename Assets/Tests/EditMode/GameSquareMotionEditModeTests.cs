@@ -489,8 +489,11 @@ public sealed class GameSquareMotionEditModeTests
         cell.RenderLevelPresentation(0f);
         Assert.That(cell.RenderedAlpha, Is.EqualTo(0f));
         cell.RenderLevelPresentation(.5f);
-        Assert.That(cell.RenderedScale, Is.EqualTo(.9f)); Assert.That(cell.RenderedAlpha, Is.EqualTo(.5f));
-        Assert.That(cell.transform.Find("RetiringTarget").GetComponent<PrecisionCellFrame>().color.a, Is.EqualTo(.5f).Within(.0001f));
+        Assert.That(cell.RenderedAlpha, Is.Zero, "Incoming targets wait until the grid morph phase is complete.");
+        Assert.That(cell.transform.Find("RetiringTarget").GetComponent<PrecisionCellFrame>().color.a, Is.Zero.Within(.0001f));
+        cell.RenderLevelPresentation(.86f);
+        float incoming = NeonMotion.Ease(.5f);
+        Assert.That(cell.RenderedScale, Is.EqualTo(.9f * incoming).Within(.0001f)); Assert.That(cell.RenderedAlpha, Is.EqualTo(incoming).Within(.0001f));
         cell.RenderLevelPresentation(1f);
         Assert.That(cell.RenderedAlpha, Is.EqualTo(1f));
         Assert.That(root.rect.size, Is.EqualTo(sizeBefore)); Assert.That(root.anchoredPosition, Is.EqualTo(positionBefore)); Assert.That(root.localRotation, Is.EqualTo(rotationBefore));
@@ -515,67 +518,35 @@ public sealed class GameSquareMotionEditModeTests
     }
 
     [Test]
-    public void SmileyFadesSmoothlyAndSurvivesRoleReuseWithoutInterceptingTouches()
+    public void RankLadderSupportsTwoThroughFiveStrictlyIncreasingOutlineSizes()
     {
         GameSquare cell = Create(GameSquare.LitSize.Large);
-        Random.State rng = Random.state;
-        cell.PlayTapFeedback(true);
-        Image face = cell.transform.Find("TapSmiley").GetComponent<Image>();
-        Assert.That(face.sprite, Is.Not.Null);
-        Assert.That(face.sprite.name, Does.StartWith("right"));
-        Assert.That(face.raycastTarget, Is.False);
-        Assert.That(face.color.a, Is.Zero);
-        cell.PlayConsumedFeedback();
-        cell.SetLitSize(GameSquare.LitSize.Small, true);
-        cell.AdvancePresentation(NeonMotion.T.smileyFadeInDuration * .5f);
-        Assert.That(face.color.a, Is.GreaterThan(0f).And.LessThan(1f));
-        Assert.That(cell.currentLitSize, Is.EqualTo(GameSquare.LitSize.Small));
-        cell.AdvancePresentation(NeonMotion.T.smileyFadeInDuration * .5f + NeonMotion.T.smileyHoldDuration);
-        Assert.That(face.color.a, Is.EqualTo(1f).Within(.0001f));
-        cell.AdvancePresentation(NeonMotion.T.smileyFadeOutDuration * .5f);
-        Assert.That(face.color.a, Is.GreaterThan(0f).And.LessThan(1f));
-        cell.AdvancePresentation(NeonMotion.T.smileyFadeOutDuration);
-        Assert.That(face.gameObject.activeSelf, Is.False);
-        Assert.That(Random.state, Is.EqualTo(rng), "Face selection must not advance Unity gameplay randomness.");
-    }
-
-    [Test]
-    public void WrongSmileyPausesAndClearsWhenPresentationIsNormalized()
-    {
-        GameSquare cell = Create(GameSquare.LitSize.Small);
-        cell.PlayTapFeedback(false);
-        Image face = cell.transform.Find("TapSmiley").GetComponent<Image>();
-        Assert.That(face.sprite.name, Is.EqualTo("wrong"));
-        cell.AdvancePresentation(.04f);
-        float opacity = face.color.a;
-        cell.SetAnimationsPaused(true);
-        cell.AdvancePresentation(1f);
-        Assert.That(face.color.a, Is.EqualTo(opacity));
-        cell.SetAnimationsPaused(false);
-        cell.SetBasePalette(Color.black, Color.cyan);
-        Assert.That(face.gameObject.activeSelf, Is.False);
-        cell.PlayTapFeedback(false);
-        cell.NormalizePresentation();
-        Assert.That(face.gameObject.activeSelf, Is.False);
-    }
-
-    [Test]
-    public void SmileyAssetsAreAvailableAndRepeatedTapsReuseOneImage()
-    {
-        GameSquare cell = Create(GameSquare.LitSize.Large);
-        Image face = cell.transform.Find("TapSmiley").GetComponent<Image>();
-        int initialChildren = cell.GetComponentsInChildren<Transform>(true).Length;
-        Assert.That(face.material.shader.isSupported, Is.True);
-        var seen = new HashSet<string>();
-        string previous = null;
-        for (int tap = 0; tap < 64; tap++)
+        for (int count = 2; count <= 5; count++)
         {
-            cell.PlayTapFeedback(true);
-            Assert.That(face.sprite.name, Is.Not.EqualTo(previous));
-            seen.Add(previous = face.sprite.name);
+            float previous = 0f;
+            for (int rank = 0; rank < count; rank++)
+            {
+                cell.SetTargetRank(rank, count, .4f, .7f, 1f, false);
+                Assert.That(cell.CurrentTargetRank, Is.EqualTo(rank));
+                Assert.That(cell.RenderedScale, Is.GreaterThan(previous));
+                previous = cell.RenderedScale;
+            }
         }
-        Assert.That(seen.Count, Is.EqualTo(4));
-        Assert.That(cell.GetComponentsInChildren<Transform>(true).Length, Is.EqualTo(initialChildren));
+    }
+
+    [Test]
+    public void NormalAndReverseConsumedFeedbackUseIndependentRetiringLayers()
+    {
+        GameSquare cell = Create(GameSquare.LitSize.Large);
+        cell.PlayConsumedFeedback();
+        cell.SetTargetRank(0, 5, .4f, .7f, 1f, true);
+        cell.AdvancePresentation(.02f);
+        float normalScale = cell.transform.Find("RetiringTarget").localScale.x;
+        cell.PlayConsumedFeedback(reverse: true);
+        cell.SetTargetRank(4, 5, .4f, .7f, 1f, true);
+        cell.AdvancePresentation(.02f);
+        Assert.That(cell.GetComponentsInChildren<PrecisionCellFrame>(true).Length, Is.GreaterThanOrEqualTo(5), "A reused cell keeps a separate retiring outline layer.");
+        Assert.That(normalScale, Is.GreaterThan(1f), "Normal consumption expands before it dissolves.");
     }
 
     private GameSquare Create(GameSquare.LitSize size)

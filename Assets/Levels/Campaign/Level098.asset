@@ -15,9 +15,13 @@ MonoBehaviour:
   stableId: neon-reflex-level-098
   levelNumber: 98
   gridSize: 5
+  outlineCount: 5
   requiredCorrectClicks: 158
   timeLimit: 7.639
   completionCoinReward: 306
+  enemies:
+    enabled: 0
+    overrideDefaults: 0
   reverseEnabled: 1
   rotateSpeed: 114.25
   scaleEnabled: 1
@@ -35,4 +39,3 @@ MonoBehaviour:
   smallScale: 0.4
   mediumScale: 0.7
   fullScale: 1
-

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-public enum UpgradeId { MaximumHealth, StartingReserve, GridStabilizer, ReverseResistance }
+public enum UpgradeId { MaximumHealth, StartingReserve, GridStabilizer, ReverseResistance, Rebound, Healing }
 [Serializable] public sealed class UpgradeTierDefinition { public long cost; public float effectValue; }
 [Serializable] public sealed class UpgradeDefinitionData { public string stableId; public string displayName; [TextArea] public string description; public List<UpgradeTierDefinition> tiers = new List<UpgradeTierDefinition>(); }
 
@@ -18,6 +18,8 @@ public static class UpgradeDefaults
     public static UpgradeDefinitionData StartingReserve() => Create("starting-reserve", "Starting Reserve", "Increases reserve time for new runs.", new[] {20f,25f,30f,35f,40f,45f}, new long[] {40,70,110,165,235,320});
     public static UpgradeDefinitionData GridStabilizer() => Create("grid-stabilizer", "Grid Stabilizer", "Slows rotation, scale and movement.", new[] {.90f,.80f,.70f,.60f,.50f}, new long[] {60,100,155,225,310});
     public static UpgradeDefinitionData ReverseResistance() => Create("reverse-resistance", "Reverse Resistance", "Adds post-Reverse cooldown.", new[] {2f,4f,6f,8f,10f}, new long[] {70,115,175,250,340});
+    public static UpgradeDefinitionData Rebound() => Create("rebound", "Rebound", "Take a hit. Get a moment to regain control.", new[] { 1f }, new long[] { 120 });
+    public static UpgradeDefinitionData Healing() => Create("healing", "Healing", "Occasional hearts restore one health. Higher tiers last longer.", new[] { .75f,.90f,1.05f,1.20f,1.35f,1.50f }, new long[] {80,125,185,260,350,455});
 }
 
 public static class UpgradeCatalog
@@ -29,14 +31,16 @@ public static class UpgradeCatalog
         if (config.startingReserveUpgrade == null) config.startingReserveUpgrade = UpgradeDefaults.StartingReserve();
         if (config.gridStabilizerUpgrade == null) config.gridStabilizerUpgrade = UpgradeDefaults.GridStabilizer();
         if (config.reverseResistanceUpgrade == null) config.reverseResistanceUpgrade = UpgradeDefaults.ReverseResistance();
+        if (config.reboundUpgrade == null) config.reboundUpgrade = UpgradeDefaults.Rebound();
+        if (config.healingUpgrade == null) config.healingUpgrade = UpgradeDefaults.Healing();
     }
     public static UpgradeDefinitionData Get(GameConfig config, UpgradeId id)
     {
         if (config == null) return null; EnsureDefaults(config);
-        switch (id) { case UpgradeId.MaximumHealth: return config.maximumHealthUpgrade; case UpgradeId.StartingReserve: return config.startingReserveUpgrade; case UpgradeId.GridStabilizer: return config.gridStabilizerUpgrade; default: return config.reverseResistanceUpgrade; }
+        switch (id) { case UpgradeId.MaximumHealth: return config.maximumHealthUpgrade; case UpgradeId.StartingReserve: return config.startingReserveUpgrade; case UpgradeId.GridStabilizer: return config.gridStabilizerUpgrade; case UpgradeId.ReverseResistance: return config.reverseResistanceUpgrade; case UpgradeId.Rebound: return config.reboundUpgrade; default: return config.healingUpgrade; }
     }
-    public static int GetTier(PlayerProfileData profile, UpgradeId id) { if (profile == null) return 0; switch(id) { case UpgradeId.MaximumHealth:return profile.maximumHealthTier; case UpgradeId.StartingReserve:return profile.startingReserveTier; case UpgradeId.GridStabilizer:return profile.gridStabilizerTier; default:return profile.reverseResistanceTier; } }
-    public static void SetTier(PlayerProfileData profile, UpgradeId id, int value) { if(profile==null)return; switch(id) {case UpgradeId.MaximumHealth:profile.maximumHealthTier=value;break;case UpgradeId.StartingReserve:profile.startingReserveTier=value;break;case UpgradeId.GridStabilizer:profile.gridStabilizerTier=value;break;default:profile.reverseResistanceTier=value;break;} }
+    public static int GetTier(PlayerProfileData profile, UpgradeId id) { if (profile == null) return 0; switch(id) { case UpgradeId.MaximumHealth:return profile.maximumHealthTier; case UpgradeId.StartingReserve:return profile.startingReserveTier; case UpgradeId.GridStabilizer:return profile.gridStabilizerTier; case UpgradeId.ReverseResistance:return profile.reverseResistanceTier; case UpgradeId.Rebound:return profile.reboundOwned ? 1 : 0; default:return profile.healingTier; } }
+    public static void SetTier(PlayerProfileData profile, UpgradeId id, int value) { if(profile==null)return; switch(id) {case UpgradeId.MaximumHealth:profile.maximumHealthTier=value;break;case UpgradeId.StartingReserve:profile.startingReserveTier=value;break;case UpgradeId.GridStabilizer:profile.gridStabilizerTier=value;break;case UpgradeId.ReverseResistance:profile.reverseResistanceTier=value;break;case UpgradeId.Rebound:profile.reboundOwned=value>0;break;default:profile.healingTier=value;break;} }
     public static int ClampTier(GameConfig config, UpgradeId id, int tier) => Mathf.Clamp(tier, 0, Get(config, id)?.tiers?.Count ?? 0);
     public static UpgradeTierDefinition CurrentTier(GameConfig config, PlayerProfileData profile, UpgradeId id) { var d=Get(config,id); int tier=ClampTier(config,id,GetTier(profile,id)); return tier > 0 ? d.tiers[tier-1] : null; }
     public static UpgradeTierDefinition NextTier(GameConfig config, PlayerProfileData profile, UpgradeId id) { var d=Get(config,id); int tier=ClampTier(config,id,GetTier(profile,id)); return d != null && tier < d.tiers.Count ? d.tiers[tier] : null; }
@@ -44,11 +48,13 @@ public static class UpgradeCatalog
     {
         EnsureDefaults(config); profile = profile ?? PlayerProfileData.CreateDefault();
         int healthCap = Mathf.Clamp(config.maximumHealthCap, 3, 20);
-        var snapshot = new UpgradeSnapshotData { maximumHealthTier=ClampTier(config,UpgradeId.MaximumHealth,profile.maximumHealthTier), startingReserveTier=ClampTier(config,UpgradeId.StartingReserve,profile.startingReserveTier), gridStabilizerTier=ClampTier(config,UpgradeId.GridStabilizer,profile.gridStabilizerTier), reverseResistanceTier=ClampTier(config,UpgradeId.ReverseResistance,profile.reverseResistanceTier), maxHealth=Mathf.Clamp(config.baseHealth, 1, healthCap), startingReserveSeconds=Mathf.Max(0f,config.baseStartingReserveSeconds), gridStabilizerMultiplier=1f };
+        var recovery = RecoverySettingsProvider.Current;
+        var snapshot = new UpgradeSnapshotData { maximumHealthTier=ClampTier(config,UpgradeId.MaximumHealth,profile.maximumHealthTier), startingReserveTier=ClampTier(config,UpgradeId.StartingReserve,profile.startingReserveTier), gridStabilizerTier=ClampTier(config,UpgradeId.GridStabilizer,profile.gridStabilizerTier), reverseResistanceTier=ClampTier(config,UpgradeId.ReverseResistance,profile.reverseResistanceTier), reboundOwned=profile.reboundOwned, healingTier=ClampTier(config,UpgradeId.Healing,profile.healingTier), maxHealth=Mathf.Clamp(config.baseHealth, 1, healthCap), startingReserveSeconds=Mathf.Max(0f,config.baseStartingReserveSeconds), gridStabilizerMultiplier=1f, reboundDurationSeconds=recovery.reboundDurationSeconds, reboundMotionMultiplier=recovery.reboundMotionMultiplier, reboundRecoveryBlendSeconds=recovery.reboundRecoveryBlendSeconds };
         var h=CurrentTier(config,profile,UpgradeId.MaximumHealth); if(h!=null) snapshot.maxHealth=Mathf.Clamp(Mathf.RoundToInt(h.effectValue),1,healthCap);
         var r=CurrentTier(config,profile,UpgradeId.StartingReserve); if(r!=null) snapshot.startingReserveSeconds=Mathf.Max(0f,r.effectValue);
         var s=CurrentTier(config,profile,UpgradeId.GridStabilizer); if(s!=null) snapshot.gridStabilizerMultiplier=Mathf.Clamp(s.effectValue,.01f,1f);
         var rr=CurrentTier(config,profile,UpgradeId.ReverseResistance); if(rr!=null) snapshot.reverseCooldownBonusSeconds=Mathf.Max(0f,rr.effectValue);
+        var healing=CurrentTier(config,profile,UpgradeId.Healing); if(healing!=null) snapshot.healingLifetimeSeconds=Mathf.Max(0f,healing.effectValue);
         return snapshot;
     }
     public static bool TryPurchase(GameConfig config, PlayerProfileData profile, UpgradeId id, bool hasActiveRun, out string reason)

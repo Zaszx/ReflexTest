@@ -55,8 +55,9 @@ Shader "NeonReflex/UI/Grid Coverage"
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
                 float2 localPoint : TEXCOORD0;
-                float4 shape : TEXCOORD1;
-                float4 mask : TEXCOORD2;
+                float dissolve : TEXCOORD1;
+                float4 shape : TEXCOORD2;
+                float4 mask : TEXCOORD3;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
             fixed4 _Color;
@@ -76,6 +77,7 @@ Shader "NeonReflex/UI/Grid Coverage"
                     output.color.rgb = UIGammaToLinear(output.color.rgb);
                 #endif
                 output.localPoint = input.uv.xy;
+                output.dissolve = input.uv.z;
                 output.shape = input.shape;
                 float2 pixelSize = output.vertex.w / abs(mul((float2x2)UNITY_MATRIX_P, _ScreenParams.xy));
                 float4 rect = clamp(_ClipRect, -2e10, 2e10);
@@ -135,6 +137,15 @@ Shader "NeonReflex/UI/Grid Coverage"
                     color.rgb += cornerLight * fixed3(.025, .045, .055);
                 }
                 color.a *= saturate(coverage);
+                // Retiring normal targets erode through a stable local-space
+                // grain. The graphic's alpha then completes the quick exit.
+                if (input.dissolve > 0)
+                {
+                    float2 grainCell = floor(input.localPoint * .22);
+                    float grain = frac(sin(dot(grainCell, float2(12.9898, 78.233))) * 43758.5453);
+                    float erased = smoothstep(1 - input.dissolve - .12, 1 - input.dissolve + .12, grain);
+                    color.a *= 1 - erased;
+                }
                 #ifdef UNITY_UI_CLIP_RECT
                 float2 mask = saturate((_ClipRect.zw - _ClipRect.xy - abs(input.mask.xy)) * input.mask.zw);
                 color.a *= mask.x * mask.y;

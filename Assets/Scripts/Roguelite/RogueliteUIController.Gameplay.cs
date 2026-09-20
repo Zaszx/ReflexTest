@@ -62,7 +62,11 @@ public sealed partial class RogueliteUIController
         var hpPanel = HudPanel("HealthPanel", 34, 361, 508, 85, PlayLime);
         healthSymbol = GameplayArt("HealthGlyph", hpPanel.transform, NeonGameplayGraphic.Kind.Heart, PlayLime);
         At(healthSymbol.rectTransform, 0, .5f, 52, 0, 34, 34);
-        health = Txt("Health", hpPanel.transform, "", 23, 108, -22, 221, 40, PlayWhite);
+        // This visual-only wrapper is the health feedback target. The HUD panel and value layout stay fixed.
+        var healthValueVisual = Rect("HealthValueVisual", hpPanel.transform);
+        At(healthValueVisual, 0, 1, 108 + 221 * .5f, -22 - 40 * .5f, 221, 40);
+        health = Text("Health", healthValueVisual, "", 23, PlayWhite, TextAlignmentOptions.MidlineLeft);
+        Fill(health.rectTransform);
         healthFill = Track("HealthProgress", hpPanel.transform, new Vector2(337, -43), 145, 17);
         healthFill.enabled = false; healthFill.transform.parent.GetComponent<Image>().color = Color.clear;
         healthSegments = GameplayArt("HealthSegments", healthFill.transform.parent, NeonGameplayGraphic.Kind.Segments, PlayLime);
@@ -73,7 +77,11 @@ public sealed partial class RogueliteUIController
         timerLabel.characterSpacing = 3;
         timeDial = GameplayArt("TimeDial", timePanel.transform, NeonGameplayGraphic.Kind.Clock, PlayCyan);
         At(timeDial.rectTransform, 1, 1, -48, -46, 61, 61);
-        gm.timerText = Txt("Timer", timePanel.transform, "", 111, 38, -54, 359, 134, PlayCyan);
+        // The reserve pulse belongs to this value-only wrapper, never the timer panel or layout.
+        var timerValueVisual = Rect("TimerValueVisual", timePanel.transform);
+        At(timerValueVisual, 0, 1, 38 + 359 * .5f, -54 - 134 * .5f, 359, 134);
+        gm.timerText = Text("Timer", timerValueVisual, "", 111, PlayCyan, TextAlignmentOptions.MidlineLeft);
+        Fill(gm.timerText.rectTransform);
         gm.timerText.fontStyle = FontStyles.Bold;
         gm.timerText.enableAutoSizing = true; gm.timerText.fontSizeMin = 68; gm.timerText.fontSizeMax = 111;
         timerGlow = AddHudGlow(gm.timerText, PlayCyan, .48f);
@@ -107,7 +115,8 @@ public sealed partial class RogueliteUIController
         footer.characterSpacing = 7; footer.alignment = TextAlignmentOptions.Center;
 
         hudMotion = play.gameObject.AddComponent<NeonHudMotion>();
-        hudMotion.Initialize(healthFill, progressFill, health, objective, timerLabel, reserve, timerFill, healthSymbol.rectTransform);
+        hudMotion.Initialize(healthFill, progressFill, health, objective, timerLabel, reserve, timerFill,
+            healthSymbol.rectTransform, healthValueVisual, timerValueVisual);
         var transitionPanel = GameplayArt("LevelTransition", play, NeonGameplayGraphic.Kind.Panel, PlayCyan);
         transitionRect = transitionPanel.rectTransform; At(transitionRect, .5f, .5f, 0, -70, 620, 112);
         transitionGroup = transitionPanel.gameObject.AddComponent<CanvasGroup>(); transitionGroup.alpha = 0;

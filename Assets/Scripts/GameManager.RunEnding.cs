@@ -107,6 +107,7 @@ public sealed partial class GameManager
 
     private void OnDestroy()
     {
+        if (runRecoverySettings != null) Destroy(runRecoverySettings);
         ReleasePracticeLevels();
         runEndingActive = false;
         runEndingToken = -1;

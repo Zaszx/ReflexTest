@@ -6,7 +6,6 @@ public sealed partial class GameManager
     private bool levelTransitionActive;
     private float levelTransitionElapsed, levelTransitionDuration;
     private int levelTransitionResumedFrame = -1;
-    private int transitionInputReadyFrame = -1;
     private Color transitionCellFrom, transitionCellTo, transitionTargetFrom, transitionTargetTo;
     private bool transitionReusesCells;
     private CanvasGroup incomingGridGroup;
@@ -27,11 +26,19 @@ public sealed partial class GameManager
     {
         if (announcementSelector == null) ResetAnnouncementSelection();
         var announcement = announcementSelector.Select(campaign, completedLevelNumber, !isDebugSession && !IsOnboardingActive);
+        string subline = announcement.Subline;
+        LevelData incoming = campaign.GetLevel(sessionRun.currentLevelIndex + 1);
+        if (incoming != null && incoming.enemies != null && incoming.enemies.enabled && !IsOnboardingActive)
+        {
+            bool introduced = false;
+            for (int i = 0; i <= sessionRun.currentLevelIndex; i++) introduced |= campaign.GetLevel(i)?.enemies?.enabled == true;
+            if (!introduced) subline = "RED SQUARES APPROACH · TAP TO DESTROY";
+        }
         BeginPreparedLevelTransition(completedLevelNumber, () =>
         {
             sessionRun.currentLevelIndex++;
             InitializeCurrentLevelState();
-        }, announcement.Subline, NeonMotion.T.levelTransitionDuration);
+        }, subline, NeonMotion.T.levelTransitionDuration);
     }
 
     // Campaign, guided next-level demo, and practice handoff share the same cell/pose morph.
@@ -50,6 +57,10 @@ public sealed partial class GameManager
         float oldSide = baseGridSide;
         StopDamageFlash();
         feedbackController.ResetImmediate();
+        // Replay handoffs borrow the original run; they must not consume its
+        // saved pickup, recovery window or enemies.
+        if (completedLevelNumber > 0) EndGameplayFeatures();
+        else HideGameplayFeatureViews();
         SetSquareAnimationsPaused(true);
 
         // Commit the prepared next-level checkpoint before presentation starts.
@@ -70,15 +81,16 @@ public sealed partial class GameManager
 
         ConfigureGridHierarchyAndSize();
         RefitTransitionLayout();
-        var sequence = sessionRun.levelState;
+        var sequence = ReadSequence(sessionRun.levelState);
         for (int i = 0; i < instantiatedSquares.Count; i++)
         {
-            var role = i == sequence.smallIndex ? GameSquare.LitSize.Small :
-                i == sequence.mediumIndex ? GameSquare.LitSize.Medium :
-                i == sequence.largeIndex ? GameSquare.LitSize.Large : GameSquare.LitSize.None;
-            instantiatedSquares[i].BeginLevelPresentation(role, activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale);
+            instantiatedSquares[i].BeginLevelPresentationRank(System.Array.IndexOf(sequence.targets, i), sequence.Count,
+                activeLevel.smallScale, activeLevel.mediumScale, activeLevel.fullScale);
         }
+        foreach (GameSquare cell in retiredGridCells)
+            cell.BeginLevelPresentationRank(-1, 3, previous.smallScale, previous.mediumScale, previous.fullScale);
         ApplyGridMotionState(false, 0f);
+        ConfigureGameplayFeatures();
         // Fitting can canonically clamp motion bounds; checkpoint that exact state.
         SaveRealRunCritical();
         SetSquareAnimationsPaused(true);
@@ -117,11 +129,20 @@ public sealed partial class GameManager
         float progress = levelTransitionDuration <= 0 ? 1f : Mathf.Clamp01(levelTransitionElapsed / levelTransitionDuration);
         RenderLevelTransition(progress);
         if (progress < 1f) return;
-        FinishLevelTransitionPresentation();
+        if (!FinishLevelTransitionPresentation(true))
+        {
+            // Newly created Graphics may not have a raycast depth until Unity
+            // registers their final geometry. Keep the announcement visible
+            // while waiting for that condition, never an arbitrary frame delay.
+            rogueliteUI.RenderLevelTransition(.88f, 1f);
+            return;
+        }
         // No second introduction, screen animation, queued input or reward callback.
         terminalRequested = false;
-        transitionInputReadyFrame = Time.frameCount;
         state = IsOnboardingActive ? FlowState.Onboarding : FlowState.Playing;
+        claimedPointers.Clear();
+        claimedPointerFrame = -1;
+        rogueliteUI.RefreshInputLayers();
         UpdateGameplayUI();
     }
 
@@ -138,10 +159,12 @@ public sealed partial class GameManager
         foreach (GameSquare cell in instantiatedSquares)
         {
             cell.SetBasePalette(cellColor, targetColor);
-            cell.RenderLevelPresentation(eased);
+            cell.RenderLevelPresentation(prepareProgress);
         }
-        foreach (GameSquare cell in retiredGridCells) cell.SetBasePalette(cellColor, targetColor);
-        float pose = transitionReusesCells ? eased : RenderGridResize(prepareProgress);
+        foreach (GameSquare cell in retiredGridCells)
+        { cell.SetBasePalette(cellColor, targetColor); cell.RenderLevelPresentation(prepareProgress); }
+        float morph = Mathf.InverseLerp(.18f, .72f, prepareProgress);
+        float pose = transitionReusesCells ? NeonMotion.Ease(morph, NeonMotion.T.levelTransitionEasing) : RenderGridResize(morph);
         gridContentRoot.localPosition = Vector3.Lerp(transitionGridPosition, Vector3.zero, pose);
         gridContentRoot.localRotation = Quaternion.Slerp(transitionGridRotation, Quaternion.identity, pose);
         gridContentRoot.localScale = Vector3.Lerp(transitionGridScale, Vector3.one, pose);
@@ -150,12 +173,12 @@ public sealed partial class GameManager
         rogueliteUI.RenderLevelTransition(progress, eased);
     }
 
-    private void FinishLevelTransitionPresentation()
+    private bool FinishLevelTransitionPresentation(bool requireInputReady = false)
     {
         foreach (GameSquare cell in instantiatedSquares)
         {
             cell.EndLevelPresentation();
-            cell.SetAnimationsPaused(applicationSuspended || state == FlowState.Settings);
+            cell.SetAnimationsPaused(true);
         }
         if (gridContentRoot != null)
         {
@@ -163,15 +186,25 @@ public sealed partial class GameManager
             gridContentRoot.localRotation = Quaternion.identity;
             gridContentRoot.localScale = Vector3.one;
         }
+        FinishGridResize();
+        if (incomingGridGroup != null) incomingGridGroup.alpha = 1f;
+        Canvas.ForceUpdateCanvases();
+        if (requireInputReady)
+        {
+            foreach (GameSquare cell in instantiatedSquares)
+                if (cell.bgImage.depth < 0 || cell.bgImage.canvasRenderer.cull) return false;
+        }
+        foreach (GameSquare cell in instantiatedSquares)
+            cell.SetAnimationsPaused(applicationSuspended || state == FlowState.Settings);
         if (incomingGridGroup != null)
         {
             incomingGridGroup.alpha = 1f;
             incomingGridGroup.blocksRaycasts = true;
             incomingGridGroup.interactable = true;
         }
-        FinishGridResize();
         levelTransitionActive = false;
         rogueliteUI.EndLevelTransition();
+        return true;
     }
 
     private void CancelLevelTransitionPresentation()

@@ -435,7 +435,7 @@ public sealed partial class RogueliteUIController : MonoBehaviour
 
     private string Effect(UpgradeId id,float value)
     {
-        switch(id){case UpgradeId.MaximumHealth:return $"{Mathf.Clamp(Mathf.RoundToInt(value),1,config.maximumHealthCap)} HP";case UpgradeId.StartingReserve:return $"{value:0.#}s";case UpgradeId.GridStabilizer:return $"{value*100:0}% speed";default:return $"+{value:0.#}s cooldown";}
+        switch(id){case UpgradeId.MaximumHealth:return $"{Mathf.Clamp(Mathf.RoundToInt(value),1,config.maximumHealthCap)} HP";case UpgradeId.StartingReserve:return $"{value:0.#}s";case UpgradeId.GridStabilizer:return $"{value*100:0}% speed";case UpgradeId.Rebound:return value > 0 ? "UNLOCKED" : "LOCKED";case UpgradeId.Healing:return value > 0 ? $"{value:0.00}s visible" : "LOCKED";default:return $"+{value:0.#}s cooldown";}
     }
     void Update()
     { if(feedbackUntil>0){feedbackUntil=Mathf.Max(0,feedbackUntil-NeonMotion.Delta());if(feedbackUntil<=0){shopFeedback.text="PERMANENT BENEFITS. APPLIED TO NEW RUNS.";shopFeedback.color=ShopMuted;}} }

@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 99d418d0a7b941819f2b1c76eac41fc1, type: 3}
+  m_Name: RecoverySettings
+  m_EditorClassIdentifier:
+  reboundDurationSeconds: 1
+  reboundMotionMultiplier: 0.5
+  reboundRecoveryBlendSeconds: 0.2
+  heartSpawnChanceAfterCorrect: 0.03
+  firstHeartEligibilityDelaySeconds: 5
+  heartSpawnCooldownSeconds: 15
+  maxHeartsPerLevel: 2
+  heartEntranceSeconds: 0.08
+  heartExitSeconds: 0.15
+  healthDamagePeakScale: 1.17
+  healthDamageRotationDegrees: 5
+  healthHealingPeakScale: 1.08
+  reserveValuePulseScale: 1.08
+  reserveValuePulseCycleSeconds: 0.8

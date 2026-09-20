@@ -49,6 +49,7 @@ public sealed partial class GameManager
             onboardingSettings.hideFlags = HideFlags.HideAndDontSave;
         }
         SaveRealRunCritical();
+        HideGameplayFeatureViews();
         CancelLevelTransitionPresentation();
         CancelSettingsDismissal();
         if (introCoroutine != null) { StopCoroutine(introCoroutine); introCoroutine = null; }
@@ -97,6 +98,8 @@ public sealed partial class GameManager
         level.stableId = "onboarding-practice-" + number;
         level.levelNumber = number;
         level.gridSize = 3;
+        level.outlineCount = 3;
+        level.enemies = new EnemyLevelSettings();
         level.requiredCorrectClicks = PracticeGoal;
         level.timeLimit = Mathf.Max(.1f, onboardingSettings.levelSeconds);
         level.rotateSpeed = 0;
@@ -346,6 +349,7 @@ public sealed partial class GameManager
     private void FinishReplayReturn()
     {
         onboarding = null;
+        ConfigureGameplayFeatures();
         ReleasePracticeLevels();
         state = FlowState.Playing;
         if (sessionRun.levelState.reverseActive) feedbackController.RestoreReverseActive();

@@ -28,7 +28,7 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Header("Target roles / seconds")]
     [Min(0)] public float targetRoleDuration = .11f;
     [Min(0)] public float targetAppearDuration = .10f;
-    [Min(0)] public float targetExitDuration = .09f;
+    [Min(0)] public float targetExitDuration = .12f;
     [Min(0)] public float targetRoleRetargetDuration = .065f;
     [Range(.5f, 1)] public float targetSpawnScale = .82f;
     [Range(0, 1)] public float targetSpawnAlpha = .65f;
@@ -45,7 +45,7 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Range(0, 1)] public float damageAccentOpacity = .82f;
     public Color damageAccent = new Color(1f, .16f, .22f, 1f);
     public Color successAccent = new Color(.35f, 1f, .48f, 1f);
-    [Min(0)] public float healthDuration = .20f;
+    [Min(0)] public float healthDuration = .25f;
     [Range(.5f, 1f)] public float healthDamageCompression = .91f;
     [Min(0)] public float floatingDamageDuration = .26f;
     [Range(0, 14)] public float floatingDamageTravel = 14f;
@@ -65,11 +65,6 @@ public sealed class NeonMotionSettings : ScriptableObject
     [Range(0, 8)] public int successParticleCount = 6;
     [Range(.15f, .25f)] public float successParticleDuration = .22f;
     [Range(0, .05f)] public float successParticleTravel = .02f;
-    [Header("Tap smileys")]
-    [Min(.01f)] public float smileyFadeInDuration = .08f;
-    [Min(0)] public float smileyHoldDuration = .14f;
-    [Min(.01f)] public float smileyFadeOutDuration = .22f;
-    [Range(.2f, .8f)] public float smileyCellFraction = .56f;
     [Range(0, 1)] public float terminalGridDimMultiplier = .22f;
     [Min(0)] public float progressDuration = .12f;
     [Min(0)] public float resourceDuration = .22f;

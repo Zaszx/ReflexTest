@@ -112,3 +112,27 @@ MonoBehaviour:
       effectValue: 8
     - cost: 340
       effectValue: 10
+  reboundUpgrade:
+    stableId: rebound
+    displayName: Rebound
+    description: Take a hit. Get a moment to regain control.
+    tiers:
+    - cost: 120
+      effectValue: 1
+  healingUpgrade:
+    stableId: healing
+    displayName: Healing
+    description: Occasional hearts restore one health. Higher tiers last longer.
+    tiers:
+    - cost: 80
+      effectValue: 0.75
+    - cost: 125
+      effectValue: 0.9
+    - cost: 185
+      effectValue: 1.05
+    - cost: 260
+      effectValue: 1.2
+    - cost: 350
+      effectValue: 1.35
+    - cost: 455
+      effectValue: 1.5

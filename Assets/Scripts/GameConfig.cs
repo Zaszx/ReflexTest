@@ -31,6 +31,8 @@ public class GameConfig : ScriptableObject
     public UpgradeDefinitionData startingReserveUpgrade = UpgradeDefaults.StartingReserve();
     public UpgradeDefinitionData gridStabilizerUpgrade = UpgradeDefaults.GridStabilizer();
     public UpgradeDefinitionData reverseResistanceUpgrade = UpgradeDefaults.ReverseResistance();
+    public UpgradeDefinitionData reboundUpgrade = UpgradeDefaults.Rebound();
+    public UpgradeDefinitionData healingUpgrade = UpgradeDefaults.Healing();
 
     private void OnValidate()
     {
